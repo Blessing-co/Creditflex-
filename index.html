@@ -72,6 +72,8 @@ async function loadMe() {
   S.me = data;
   if (data.status !== "active") return renderBlocked();
   renderShell();
+  if (data.role === "agent" && !data.onboarding_completed_at) setTimeout(() => startCreditflexTour(), 450);
+  setTimeout(() => syncCreditflexOfflineQueue(), 700);
 }
 async function logout() { await sb.auth.signOut(); S.me = null; renderLogin(); }
 
@@ -161,7 +163,7 @@ function renderBlocked() {
 
 /* ---------- shell ---------- */
 function renderShell() {
-  const tabs = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "New customer", "person_add"], ["catalogue", "Catalogue", "grid_view"]];
+  const tabs = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "New customer", "person_add"], ["catalogue", "Catalogue", "grid_view"], ["analytics", "Analytics", "query_stats"], ["settings", "Settings", "settings"], ["credit", "Credit", "info"]];
   if (S.me.role === "admin") tabs.push(["staff", "Staff", "group"]);
   $app.innerHTML = `
   <header class="fixed top-0 inset-x-0 z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
@@ -175,15 +177,15 @@ function renderShell() {
   </header>
   <main id="view" class="max-w-2xl mx-auto px-4 pt-20 pb-28 space-y-4"></main>
   <nav class="fixed bottom-0 inset-x-0 z-50 bg-surface/95 backdrop-blur-xl shadow-[0_-2px_12px_rgba(0,0,0,0.08)] pb-[env(safe-area-inset-bottom)]">
-    <div class="max-w-2xl mx-auto grid h-16 items-stretch" style="grid-template-columns:repeat(${tabs.length},minmax(0,1fr))">
-      ${tabs.map(([k, l, i]) => { const on = S.tab === k; return `<button data-t="${k}" type="button" class="flex flex-col items-center justify-center gap-0.5 min-h-[48px] ${on ? "text-primary-container" : "text-on-surface-variant"}">
+    <div class="max-w-2xl mx-auto flex h-16 items-stretch overflow-x-auto">
+      ${tabs.map(([k, l, i]) => { const on = S.tab === k; return `<button data-t="${k}" type="button" class="flex min-w-[76px] flex-1 flex-col items-center justify-center gap-0.5 min-h-[48px] ${on ? "text-primary-container" : "text-on-surface-variant"}">
         <span class="px-4 py-0.5 rounded-full ${on ? "bg-primary-fixed" : ""}">${ic(i, "text-[24px] " + (on ? "fill" : ""))}</span>
         <span class="text-[10px] leading-[12px] text-center ${on ? "font-extrabold" : "font-semibold"}">${l}</span></button>`; }).join("")}
     </div>
   </nav>`;
   $("lo").onclick = logout;
   document.querySelectorAll("nav button").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); });
-  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff })[S.tab]();
+  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, credit: viewCreditflexCredit })[S.tab]();
 }
 
 /* ---------- collections ---------- */
@@ -311,7 +313,21 @@ async function viewPay() {
     $("pf").onsubmit = async e => {
       e.preventDefault(); const b = $("pb"); busy(b, true);
       const amount = Number($("amt").value);
-      const { error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: $("pd").value, collected_by: S.me.id });
+      const paymentDate = $("pd").value;
+      if (!navigator.onLine) {
+        const queued = await queueCreditflexPayment({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, customer_name: r.customer_name, product_name: r.product_name });
+        busy(b, false);
+        if (!queued) return say("pm", "Could not save this payment on this device. Keep the app open and try again.");
+        const who = r.customer_name;
+        S.selPurchase = null; viewPay();
+        say("top", "Payment queued on this phone. It is NOT yet recorded on the server. It will sync when internet returns.", true);
+        return;
+      }
+      const offlineId = crypto.randomUUID();
+      let { error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId });
+      if (error && /offline_submission_id|column/i.test(error.message || "")) {
+        ({ error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }));
+      }
       busy(b, false);
       if (error) return say("pm", error.message);
       const who = r.customer_name;
@@ -438,6 +454,64 @@ window.addEventListener("load", () => {
   try { document.fonts.load('24px "Material Symbols Outlined"', "payments").then(f => { if (f && f.length) document.documentElement.classList.add("icons"); }); } catch (e) {}
 });
 boot();
+</script>
+<script>
+/* Creditflex enhancements: onboarding, analytics, settings, credits and offline queue. */
+(function(){
+"use strict";
+const cfSteps=[
+ {title:"Welcome to Creditflex",body:"This app helps you manage customers, products, instalment plans and collections. Use the bottom navigation to move between sections.",target:"collections"},
+ {title:"Customers and purchases",body:"Use New customer to register a customer, choose an in-stock product and assign a payment plan. Check the customer and plan details before saving.",target:"register"},
+ {title:"Record payments",body:"Open Record payment, search for the customer, select the correct active purchase, confirm the amount and date, then save. A payment queued offline is not yet recorded until it syncs.",target:"pay"},
+ {title:"Collections and analytics",body:"Collections shows payment totals for a date range. Analytics gives a summary of recorded payments and daily trends. Voided payments are excluded from analytics.",target:"analytics"},
+ {title:"Catalogue, settings and support",body:"Catalogue shows products. Settings lets you choose a theme and check offline payments waiting to sync. Credit contains project contact details.",target:"settings"}
+];
+let cfStep=0;
+const cfDBName="creditflex-offline-v1",cfStore="pending-payments";
+function cfOpenDB(){return new Promise((resolve,reject)=>{if(!("indexedDB" in window))return reject(Error("Offline storage is not supported on this browser."));const req=indexedDB.open(cfDBName,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(cfStore))db.createObjectStore(cfStore,{keyPath:"id"});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
+async function cfAll(){const db=await cfOpenDB();return new Promise((resolve,reject)=>{const q=db.transaction(cfStore,"readonly").objectStore(cfStore).getAll();q.onsuccess=()=>resolve(q.result||[]);q.onerror=()=>reject(q.error);});}
+async function cfPut(row){const db=await cfOpenDB();return new Promise((resolve,reject)=>{const tx=db.transaction(cfStore,"readwrite");tx.objectStore(cfStore).put(row);tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error);});}
+async function cfDelete(id){const db=await cfOpenDB();return new Promise((resolve,reject)=>{const tx=db.transaction(cfStore,"readwrite");tx.objectStore(cfStore).delete(id);tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error);});}
+window.queueCreditflexPayment=async function(row){try{await cfPut({id:crypto.randomUUID(),...row,queued_at:new Date().toISOString(),status:"pending"});return true;}catch(e){console.error("Offline queue error",e);return false;}};
+window.syncCreditflexOfflineQueue=async function(){
+ if(!navigator.onLine||!window.sb||!window.S||!S.me)return;
+ let rows;try{rows=await cfAll();}catch(e){return;}
+ for(const row of rows){
+  try{
+   const payload={purchase_id:row.purchase_id,amount:row.amount,paid_on:row.paid_on,collected_by:row.collected_by,offline_submission_id:row.id};
+   const result=await sb.from("payments").insert(payload);
+   if(!result.error){await cfDelete(row.id);continue;}
+   const msg=String(result.error.message||"");
+   if(/duplicate key|unique constraint/i.test(msg)){
+    const existing=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
+    if(existing.data){await cfDelete(row.id);continue;}
+   }
+   await cfPut({...row,status:"needs-attention",last_error:msg});
+  }catch(e){break;}
+ }
+ if(typeof window.refreshCreditflexQueueCount==="function")window.refreshCreditflexQueueCount();
+};
+function cfModal(){let m=document.getElementById("cf-tour");if(m)m.remove();m=document.createElement("div");m.id="cf-tour";m.className="fixed inset-0 z-[100] bg-black/60 flex items-end sm:items-center justify-center p-3";m.innerHTML='<section class="bg-white text-slate-900 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4" role="dialog" aria-modal="true" aria-labelledby="cf-tour-title"><div class="flex items-center justify-between"><span id="cf-tour-count" class="text-sm font-semibold text-emerald-700"></span><button id="cf-tour-all" class="text-sm underline">Skip training</button></div><h2 id="cf-tour-title" class="text-xl font-bold"></h2><p id="cf-tour-body" class="text-sm leading-6"></p><div class="h-1.5 bg-slate-200 rounded-full overflow-hidden"><div id="cf-tour-progress" class="h-full bg-emerald-600 rounded-full"></div></div><div class="flex gap-2"><button id="cf-tour-skip" class="flex-1 rounded-xl border border-slate-300 min-h-12 font-semibold">Skip this part</button><button id="cf-tour-next" class="flex-1 rounded-xl bg-emerald-700 text-white min-h-12 font-semibold">Next</button></div></section>';document.body.appendChild(m);return m;}
+async function cfFinishTour(){const m=document.getElementById("cf-tour");if(m)m.remove();try{const {error}=await sb.rpc("complete_agent_onboarding");if(error)console.warn("Could not save onboarding completion",error.message);}catch(e){console.warn(e);}}
+function cfShowStep(){const s=cfSteps[cfStep],m=document.getElementById("cf-tour")||cfModal();m.querySelector("#cf-tour-count").textContent="STEP "+(cfStep+1)+" OF "+cfSteps.length;m.querySelector("#cf-tour-title").textContent=s.title;m.querySelector("#cf-tour-body").textContent=s.body;m.querySelector("#cf-tour-progress").style.width=((cfStep+1)/cfSteps.length*100)+"%";m.querySelector("#cf-tour-next").textContent=cfStep===cfSteps.length-1?"Finish":"Next";m.querySelector("#cf-tour-next").onclick=()=>{if(cfStep<cfSteps.length-1){cfStep++;cfShowStep();}else cfFinishTour();};m.querySelector("#cf-tour-skip").onclick=()=>{if(cfStep<cfSteps.length-1){cfStep++;cfShowStep();}else cfFinishTour();};m.querySelector("#cf-tour-all").onclick=cfFinishTour;}
+window.startCreditflexTour=function(){if(!S.me||S.me.role!=="agent"||S.me.onboarding_completed_at)return;cfStep=0;cfShowStep();};
+window.viewCreditflexAnalytics=async function(){
+ const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Analytics</h1><section class="'+C.card+' space-y-3"><div class="grid grid-cols-2 gap-3"><div><label class="'+C.lbl+'">From</label><input id="cfa" type="date" class="'+C.inp+'" value="'+today()+'"></div><div><label class="'+C.lbl+'">To</label><input id="cfb" type="date" class="'+C.inp+'" value="'+today()+'"></div></div><button id="cf-run" class="'+C.btn+'">Refresh analytics</button><div id="cf-analytics-msg"></div></section><div id="cf-analytics-out">'+loading+'</div>';
+ async function load(){const out=$("cf-analytics-out");out.innerHTML=loading;const {data,error}=await sb.from("payments").select("id,amount,paid_on,collected_by,voided_at").gte("paid_on",$("cfa").value).lte("paid_on",$("cfb").value).is("voided_at",null).order("paid_on");if(error){out.innerHTML='<div class="bg-error-container rounded-xl p-4">'+esc(error.message)+'</div>';return;}const rows=data||[],total=rows.reduce((n,p)=>n+Number(p.amount||0),0),byDay={};rows.forEach(p=>byDay[p.paid_on]=(byDay[p.paid_on]||0)+Number(p.amount||0));const days=Object.entries(byDay).sort((a,b)=>a[0].localeCompare(b[0]));const max=Math.max(1,...days.map(x=>x[1]));let names={};try{const ids=[...new Set(rows.map(x=>x.collected_by).filter(Boolean))];if(ids.length){const staff=await sb.from("staff").select("id,full_name").in("id",ids);(staff.data||[]).forEach(s=>names[s.id]=s.full_name);}}catch(e){}const byAgent={};rows.forEach(p=>{const k=p.collected_by||"unknown";byAgent[k]=(byAgent[k]||0)+Number(p.amount||0);});const queued=await cfAll().catch(()=>[]);out.innerHTML='<section class="grid grid-cols-2 gap-3"><article class="'+C.card+'"><div class="'+C.mute+'">Total collected</div><div class="text-2xl font-extrabold mt-1">'+money(total)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Payments recorded</div><div class="text-2xl font-extrabold mt-1">'+rows.length+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Average payment</div><div class="text-xl font-bold mt-1">'+money(rows.length?total/rows.length:0)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Waiting on this phone</div><div class="text-2xl font-extrabold mt-1">'+queued.length+'</div></article></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Daily collections</h2>'+(days.length?days.map(([d,n])=>'<div><div class="flex justify-between text-sm mb-1"><span>'+esc(d)+'</span><b>'+money(n)+'</b></div><div class="h-2 bg-surface-container-high rounded-full overflow-hidden"><div class="h-full bg-primary-container rounded-full" style="width:'+(n/max*100)+'%"></div></div></div>').join(""):'<p class="'+C.mute+'">No payments in this date range.</p>')+'</section><section class="'+C.card+' space-y-2"><h2 class="text-title-md">By agent</h2>'+Object.entries(byAgent).sort((a,b)=>b[1]-a[1]).map(([id,n])=>'<div class="flex justify-between gap-3 border-b border-slate-200 py-2"><span>'+esc(names[id]|| (id===S.me.id?S.me.full_name:"Agent"))+'</span><b>'+money(n)+'</b></div>').join("")+'</section>'; }
+ $("cf-run").onclick=load;load();
+};
+window.viewCreditflexSettings=async function(){
+ const v=$("view"),theme=localStorage.getItem("creditflex-theme")||"light";v.innerHTML='<h1 class="'+C.h1+'">Settings</h1><section class="'+C.card+' space-y-4"><div><h2 class="text-title-md">Appearance</h2><p class="'+C.mute+' mt-1">Choose how Creditflex looks on this device.</p></div><label class="flex items-center justify-between gap-3 min-h-12"><span class="font-semibold">Dark theme</span><input id="cf-dark" type="checkbox" class="w-6 h-6 accent-primary" '+(theme==="dark"?"checked":"")+'></label><p id="cf-theme-msg" class="'+C.mute+'"></p></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Offline payments</h2><p class="'+C.mute+'">Payments entered without internet are stored on this phone until they successfully sync. They are not visible to the admin or other agents before syncing.</p><div id="cf-queue-list">'+loading+'</div><button id="cf-sync" class="'+C.btn+'">Sync now</button></section><section class="'+C.card+' space-y-2"><h2 class="text-title-md">Account</h2><p class="'+C.mute+'">'+esc(S.me.full_name)+' · '+esc(S.me.role)+'</p><p class="'+C.mute+'">Use Sign out in the top bar to end this session.</p></section>';
+ const dark=$("cf-dark");dark.onchange=()=>{cfApplyTheme(dark.checked?"dark":"light");$("cf-theme-msg").textContent="Theme saved on this device.";};$("cf-sync").onclick=async()=>{await syncCreditflexOfflineQueue();await cfRenderQueue();};await cfRenderQueue();
+};
+async function cfRenderQueue(){const el=$("cf-queue-list");if(!el)return;const rows=await cfAll().catch(()=>[]);el.innerHTML=rows.length?rows.map(r=>'<div class="border-b border-slate-200 py-2"><div class="flex justify-between gap-2"><b>'+esc(r.customer_name||"Customer")+'</b><b>'+money(r.amount)+'</b></div><p class="text-sm opacity-70">'+esc(r.product_name||"Purchase")+' · '+esc(r.paid_on)+' · '+esc(r.status)+'</p>'+(r.last_error?'<p class="text-sm text-red-700">'+esc(r.last_error)+'</p>':'')+'</div>').join(""):'<p class="'+C.mute+'">No payments waiting to sync.</p>';}
+window.refreshCreditflexQueueCount=cfRenderQueue;
+window.viewCreditflexCredit=function(){const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Credit / About</h1><section class="'+C.card+' space-y-3"><div class="text-2xl font-extrabold">Creditflex Agents</div><p class="'+C.mute+'">Customer and instalment collection management.</p><div class="border-t border-slate-200 pt-3"><div class="text-sm opacity-70">Project development</div><b>Blissco Energy</b></div></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Contact and support</h2><a class="block text-primary underline" href="tel:+233206709055">Call 020 670 9055</a><a class="block text-primary underline" href="https://wa.me/233206709055" target="_blank" rel="noopener">WhatsApp 020 670 9055</a><a class="block text-primary underline" href="mailto:Blisscoenergy001@gmail.com">Blisscoenergy001@gmail.com</a></section><p class="text-xs text-center opacity-60">Creditflex Agents · Ghana</p>';};
+function cfApplyTheme(theme){document.documentElement.dataset.cfTheme=theme;localStorage.setItem("creditflex-theme",theme);}
+const cfThemeCSS=document.createElement("style");cfThemeCSS.textContent='html[data-cf-theme="dark"] body{background:#101714!important;color:#e4eee8!important}html[data-cf-theme="dark"] .bg-surface,html[data-cf-theme="dark"] .bg-surface-container-lowest,html[data-cf-theme="dark"] .bg-surface-container-low,html[data-cf-theme="dark"] .bg-surface-container-high{background-color:#1d2923!important;color:#e4eee8!important}html[data-cf-theme="dark"] .text-on-surface,html[data-cf-theme="dark"] .text-on-surface-variant{color:#e4eee8!important}html[data-cf-theme="dark"] input,html[data-cf-theme="dark"] select{background:#25352d!important;color:#fff!important}html[data-cf-theme="dark"] header,html[data-cf-theme="dark"] nav{background:rgba(20,30,25,.96)!important}';document.head.appendChild(cfThemeCSS);cfApplyTheme(localStorage.getItem("creditflex-theme")||"light");
+window.addEventListener("online",()=>setTimeout(()=>syncCreditflexOfflineQueue(),500));
+window.addEventListener("load",()=>{if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(e=>console.warn("Offline app shell unavailable",e));});
+})();
 </script>
 </body>
 </html>
