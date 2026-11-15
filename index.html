@@ -19,7 +19,8 @@
 const SUPABASE_URL = "https://dsjuwmtojudcaulfqmyp.supabase.co";
 const SUPABASE_KEY = "sb_publishable_pSzeeh2eHthcVfL7ZQzZug_xmdN9t2a";
 const RECOVERY = /type=recovery/.test(location.hash);
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const HASHERR = ((location.hash.match(/error_description=([^&]+)/) || [])[1] || "").replace(/\+/g, " ");
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "implicit" } });
 
 const $app = document.getElementById("app");
 const S = { me: null, tab: "collections", signup: false, selPurchase: null, recovery: RECOVERY };
@@ -59,7 +60,7 @@ function busy(btn, on) {
 /* ---------- boot ---------- */
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) return renderLogin();
+  if (!session) { let m; try { m = HASHERR ? decodeURIComponent(HASHERR) + ". Tap Forgot password to get a new link." : undefined; } catch (e) {} if (HASHERR) history.replaceState(null, "", location.pathname); return renderLogin(m); }
   if (S.recovery) return renderNewPassword();
   await loadMe();
 }
