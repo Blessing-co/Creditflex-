@@ -1,8 +1,17 @@
-const SHELL_CACHE="creditflex-shell-v2";
-const RUNTIME_CACHE="creditflex-runtime-v1";
+const SHELL_CACHE="creditflex-shell-v3";
+const RUNTIME_CACHE="creditflex-runtime-v2";
 const APP_URLS=["/"];
+const WARM_URLS=["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"];
 self.addEventListener("install",event=>{
- event.waitUntil(caches.open(SHELL_CACHE).then(cache=>cache.addAll(APP_URLS)).then(()=>self.skipWaiting()));
+ event.waitUntil((async()=>{
+  const shell=await caches.open(SHELL_CACHE);
+  await shell.addAll(APP_URLS);
+  const runtime=await caches.open(RUNTIME_CACHE);
+  await Promise.all(WARM_URLS.map(async url=>{
+   try{const request=new Request(url,{mode:"no-cors"});const response=await fetch(request);if(response)await runtime.put(request,response);}catch(error){/* The normal online request will populate this cache later. */}
+  }));
+  await self.skipWaiting();
+ })());
 });
 self.addEventListener("activate",event=>{
  event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith("creditflex-")&&![SHELL_CACHE,RUNTIME_CACHE].includes(k)).map(k=>caches.delete(k)));await self.clients.claim();})());
