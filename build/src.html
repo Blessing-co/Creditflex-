@@ -100,7 +100,7 @@ function renderLogin(note) {
         ${S.signup ? `<div><label class="${C.lbl}" for="fn">Full name</label><input id="fn" class="${C.inp}" required minlength="2" autocomplete="name"></div>
         <div><label class="${C.lbl}" for="ph">Phone</label><input id="ph" class="${C.inp}" inputmode="tel" autocomplete="tel"></div>` : ""}
         <div><label class="${C.lbl}" for="em">Email</label><input id="em" class="${C.inp}" type="email" autocomplete="email" required></div>
-        <div><label class="${C.lbl}" for="pw">Password</label><input id="pw" class="${C.inp}" type="password" autocomplete="${S.signup ? "new-password" : "current-password"}" required minlength="6"></div>
+        <div><label class="${C.lbl}" for="pw">Password</label><input id="pw" class="${C.inp}" type="password" autocomplete="${S.signup ? "new-password" : "current-password"}" required minlength="8"></div>
         <button class="${C.btn}" id="authBtn">${S.signup ? "Sign up" : "Sign in"}</button>
       </form>
       <div id="authMsg">${note ? `<div class="bg-error-container text-on-error-container rounded-xl p-4 flex items-start gap-3 mt-3">${ic("error", "fill text-[22px] shrink-0")}<span class="text-label-lg flex-1">${esc(note)}</span></div>` : ""}</div>
@@ -123,6 +123,8 @@ function renderLogin(note) {
     const b = $("authBtn"); busy(b, true);
     const email = $("em").value.trim(), password = $("pw").value;
     if (S.signup) {
+      const pwIssue = cfPwIssue(password);
+      if (pwIssue) { busy(b, false); return say("authMsg", pwIssue); }
       const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: $("fn").value.trim(), phone: $("ph").value.trim() } } });
       busy(b, false);
       if (error) return say("authMsg", error.message);
@@ -141,14 +143,15 @@ function renderNewPassword() {
       <h1 class="text-headline-lg-mobile text-on-surface">Choose a new password</h1>
       <p class="${C.mute} mt-1 mb-4">At least 6 characters.</p>
       <form id="npForm" class="space-y-3.5">
-        <div><label class="${C.lbl}" for="np1">New password</label><input id="np1" class="${C.inp}" type="password" autocomplete="new-password" required minlength="6"></div>
-        <div><label class="${C.lbl}" for="np2">Repeat password</label><input id="np2" class="${C.inp}" type="password" autocomplete="new-password" required minlength="6"></div>
+        <div><label class="${C.lbl}" for="np1">New password</label><input id="np1" class="${C.inp}" type="password" autocomplete="new-password" required minlength="8"></div>
+        <div><label class="${C.lbl}" for="np2">Repeat password</label><input id="np2" class="${C.inp}" type="password" autocomplete="new-password" required minlength="8"></div>
         <button class="${C.btn}" id="npBtn">Save password</button>
       </form><div id="npMsg"></div>
     </section></main>`;
   $("npForm").onsubmit = async e => {
     e.preventDefault();
     if ($("np1").value !== $("np2").value) return say("npMsg", "The two passwords do not match.");
+    { const pwIssue = cfPwIssue($("np1").value); if (pwIssue) return say("npMsg", pwIssue); }
     const b = $("npBtn"); busy(b, true);
     const { error } = await sb.auth.updateUser({ password: $("np1").value });
     busy(b, false);
@@ -169,38 +172,67 @@ function renderBlocked() {
   $("lo").onclick = logout;
 }
 
+/* ---------- password rules ---------- */
+const CF_WEAK = ["password","12345678","123456789","1234567890","qwertyui","qwerty123","iloveyou","creditflex","password1","11111111","00000000","abcd1234","admin123"];
+function cfPwIssue(pw) {
+  pw = String(pw || "");
+  if (pw.length < 8) return "Password must be at least 8 characters.";
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) return "Password must contain both letters and numbers.";
+  if (CF_WEAK.includes(pw.toLowerCase()) || /^(.)\1+$/.test(pw)) return "That password is too easy to guess. Choose a different one.";
+  return null;
+}
+/* ---------- csv helper ---------- */
+function cfCsvDownload(name, rows) {
+  const cell = v => { let t = String(v ?? ""); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+  const body = rows.map(r => r.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff" + body], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function cfFetchAll(table, select, order) {
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await sb.from(table).select(select).order(order, { ascending: true }).range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < 1000) return all;
+    from += 1000;
+  }
+}
+
 /* ---------- shell ---------- */
 const MORE_ALL = [["analytics", "Analytics", "query_stats", "Collections, trends and top agents"], ["settings", "Settings", "settings", "Theme, colours, offline payments, training"], ["account", "Account", "manage_accounts", "Your details and password"], ["credit", "Credit", "info", "Who built this and how to reach us"]];
-const MORE_ADMIN = [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"]];
+const MORE_ADMIN = [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"]];
 const MORE_KEYS = [...MORE_ALL, ...MORE_ADMIN].map(x => x[0]);
-function viewMore() {
-  const v = $("view"), items = S.me.role === "admin" ? [...MORE_ADMIN, ...MORE_ALL] : MORE_ALL;
-  v.innerHTML = `<h1 class="${C.h1}">More</h1><div class="grid gap-3">${items.map(([k, l, i, d]) => `<button type="button" data-go="${k}" class="${C.card} w-full text-left flex items-center gap-4 min-h-[64px] active:scale-[0.99] transition-all"><span class="w-12 h-12 rounded-xl bg-primary-fixed text-on-primary-fixed flex items-center justify-center shrink-0">${ic(i, "text-[26px]")}</span><span class="min-w-0"><b class="block text-title-md text-on-surface">${l}</b><span class="block ${C.mute}">${d}</span></span></button>`).join("")}</div>`;
-  v.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { S.tab = b.dataset.go; renderShell(); });
-}
+const MAIN_TABS = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "Customers", "person_search"], ["catalogue", "Catalogue", "grid_view"]];
 function renderShell() {
-  const tabs = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "New customer", "person_add"], ["catalogue", "Catalogue", "grid_view"], ["more", "More", "more_horiz"]];
+  const admin = S.me.role === "admin";
+  const items = [...MAIN_TABS, ...(admin ? MORE_ADMIN : []).map(x => [x[0], x[1], x[2]]), ...MORE_ALL.map(x => [x[0], x[1], x[2]])];
+  const row = ([k, l, i]) => { const on = S.tab === k; return `<button data-t="${k}" type="button" role="menuitem" class="w-full flex items-center gap-3 px-4 min-h-[48px] text-left ${on ? "bg-primary-fixed text-on-primary-fixed font-extrabold" : "text-on-surface font-semibold"} active:bg-surface-container-high">${ic(i, "text-[22px] " + (on ? "fill" : ""))}<span class="text-label-lg">${l}</span></button>`; };
   $app.innerHTML = `
   <header class="fixed top-0 inset-x-0 z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
-    <div class="h-16 max-w-2xl mx-auto px-4 flex items-center justify-between gap-2">
+    <div class="h-16 max-w-2xl mx-auto px-4 flex items-center justify-between gap-2 relative">
       <div class="flex items-center gap-3 min-w-0">
         <div class="w-10 h-10 rounded-xl bg-primary-container text-on-primary flex items-center justify-center shrink-0">${ic("payments", "fill text-[22px]")}</div>
         <div class="min-w-0 leading-tight"><div class="text-label-lg text-on-surface">Creditflex</div><div class="text-label-md text-on-surface-variant truncate">${esc(S.me.full_name)} · ${esc(S.me.role)}</div></div>
       </div>
-      <button id="lo" class="min-h-[48px] px-3 flex items-center gap-1 text-error rounded-xl active:bg-error-container/50" type="button">${ic("logout", "text-[20px]")}<span class="text-label-md">Sign out</span></button>
+      <button id="menuBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Open menu" class="min-h-[48px] min-w-[48px] px-3 flex items-center justify-center gap-1 rounded-xl bg-primary-fixed text-on-primary-fixed active:scale-95">${ic("menu", "text-[24px]")}<span class="text-label-md">Menu</span></button>
+      <nav id="menuPanel" role="menu" class="hidden absolute right-4 top-[60px] w-64 max-w-[calc(100vw-2rem)] max-h-[75vh] overflow-y-auto rounded-2xl bg-surface shadow-xl border border-outline-variant/50 py-2 z-50">
+        ${items.map(row).join("")}
+        <div class="my-1 border-t border-outline-variant/50"></div>
+        <button id="lo" class="w-full flex items-center gap-3 px-4 min-h-[48px] text-left text-error active:bg-error-container/50" type="button">${ic("logout", "text-[22px]")}<span class="text-label-lg">Sign out</span></button>
+      </nav>
     </div>
   </header>
-  <main id="view" class="max-w-2xl mx-auto px-4 pt-20 pb-28 space-y-4"></main>
-  <nav class="fixed bottom-0 inset-x-0 z-50 bg-surface/95 backdrop-blur-xl shadow-[0_-2px_12px_rgba(0,0,0,0.08)] pb-[env(safe-area-inset-bottom)]">
-    <div class="max-w-2xl mx-auto grid h-16 items-stretch" style="grid-template-columns:repeat(5,minmax(0,1fr))">
-      ${tabs.map(([k, l, i]) => { const on = S.tab === k || (k === "more" && MORE_KEYS.includes(S.tab)); return `<button data-t="${k}" type="button" class="flex flex-col items-center justify-center gap-0.5 min-h-[48px] ${on ? "text-primary-container" : "text-on-surface-variant"}">
-        <span class="px-4 py-0.5 rounded-full ${on ? "bg-primary-fixed" : ""}">${ic(i, "text-[24px] " + (on ? "fill" : ""))}</span>
-        <span class="text-[10px] leading-[12px] text-center ${on ? "font-extrabold" : "font-semibold"}">${l}</span></button>`; }).join("")}
-    </div>
-  </nav>`;
+  <main id="view" class="max-w-2xl mx-auto px-4 pt-20 pb-10 space-y-4"></main>`;
+  const panel = $("menuPanel"), mb = $("menuBtn");
+  const close = () => { panel.classList.add("hidden"); mb.setAttribute("aria-expanded", "false"); };
+  mb.onclick = e => { e.stopPropagation(); const open = panel.classList.toggle("hidden") === false; mb.setAttribute("aria-expanded", String(open)); };
+  panel.onclick = e => e.stopPropagation();
+  if (window.cfMenuClose) document.removeEventListener("click", window.cfMenuClose);
+  window.cfMenuClose = close; document.addEventListener("click", close);
   $("lo").onclick = logout;
-  document.querySelectorAll("nav button").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); });
-  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, more: viewMore, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit })[S.tab]();
+  panel.querySelectorAll("button[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); window.scrollTo(0, 0); });
+  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport })[S.tab]();
 }
 
 /* ---------- collections ---------- */
@@ -398,7 +430,16 @@ async function viewPay() {
 
 /* ---------- register customer ---------- */
 async function viewRegister() {
-  const v = $("view");
+  const v = $("view"), mode = S.cmode || "find";
+  v.innerHTML = `<h1 class="${C.h1}">Customers</h1>
+    <div class="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-surface-container-high" role="tablist">
+      ${[["find", "Find & statement"], ["new", "New customer"]].map(([k, l]) => `<button type="button" role="tab" data-cm="${k}" aria-selected="${mode === k}" class="min-h-[44px] rounded-xl text-label-lg ${mode === k ? "bg-primary-container text-on-primary font-extrabold" : "text-on-surface-variant font-semibold"}">${l}</button>`).join("")}
+    </div><div id="cbody" class="space-y-4"></div>`;
+  v.querySelectorAll("[data-cm]").forEach(b => b.onclick = () => { S.cmode = b.dataset.cm; viewRegister(); });
+  return mode === "find" ? cfStatements() : cfRegisterForm();
+}
+async function cfRegisterForm() {
+  const v = $("cbody");
   v.innerHTML = `<h1 class="${C.h1}">New customer</h1>${loading}`;
   const [{ data: prods }, { data: plans }] = await Promise.all([
     sb.from("products").select("*").eq("in_stock", true).order("name"),
@@ -427,6 +468,51 @@ async function viewRegister() {
     if (error) return say("rm", error.message);
     $("rf").reset(); preview(); say("rm", "Customer registered. You can now record their payments.", true);
   };
+}
+
+
+/* ---------- customer statement ---------- */
+async function cfStatements() {
+  const v = $("cbody");
+  if (!navigator.onLine) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">Customer statements need an internet connection. Reconnect and try again.</div>`;
+  v.innerHTML = loading;
+  const { data, error } = await sb.from("customers").select("id,full_name,phone,location").order("full_name").limit(1000);
+  if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(error.message)}</div>`;
+  const all = data || [];
+  v.innerHTML = `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
+    <input id="sq" type="search" autocomplete="off" class="${C.inp}" placeholder="Type a name or phone"></section>
+    <section id="slist" class="space-y-2"></section><div id="sbox"></div>`;
+  const list = () => {
+    const q = $("sq").value.trim().toLowerCase();
+    const rows = all.filter(c => !q || (c.full_name || "").toLowerCase().includes(q) || (c.phone || "").replace(/\s/g, "").includes(q.replace(/\s/g, ""))).slice(0, 40);
+    $("slist").innerHTML = rows.length ? rows.map(c => `<button type="button" data-c="${c.id}" class="${C.card} w-full text-left flex items-center justify-between gap-3 min-h-[56px] active:scale-[0.99]"><span class="min-w-0"><b class="block text-body-lg truncate">${esc(c.full_name)}</b><span class="block ${C.mute} truncate">${esc(c.phone || "No phone")}${c.location ? " · " + esc(c.location) : ""}</span></span>${ic("receipt_long", "text-[22px] text-primary shrink-0")}</button>`).join("") : `<div class="bg-surface-container-low rounded-xl p-5 text-center ${C.mute}">${all.length ? "No customer matches that search." : "No customers yet."}</div>`;
+    $("slist").querySelectorAll("[data-c]").forEach(b => b.onclick = () => cfStatement(all.find(c => String(c.id) === b.dataset.c)));
+  };
+  $("sq").oninput = list; list();
+}
+async function cfStatement(c) {
+  const box = $("sbox"); box.innerHTML = loading; box.scrollIntoView({ behavior: "smooth", block: "start" });
+  const led = await sb.from("purchase_ledger").select("*").eq("customer_id", c.id).order("created_at", { ascending: false });
+  if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(led.error.message)}</div>`;
+  const purchases = led.data || [], ids = purchases.map(x => x.purchase_id);
+  let pays = [];
+  if (ids.length) {
+    const r = await sb.from("payments").select("id,purchase_id,amount,paid_on,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true });
+    if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(r.error.message)}</div>`;
+    pays = r.data || [];
+  }
+  const tot = purchases.reduce((a, x) => a + Number(x.total_price), 0), paid = purchases.reduce((a, x) => a + Number(x.amount_paid), 0), bal = purchases.reduce((a, x) => a + Number(x.balance), 0);
+  const text = () => ["Creditflex statement for " + c.full_name, ...purchases.map(x => "• " + x.product_name + ": paid " + money(x.amount_paid) + " of " + money(x.total_price) + ", balance " + money(x.balance)), "Total paid: " + money(paid), "Balance owed: " + money(bal), "Thank you."].join("\n");
+  const wa = () => { let n = String(c.phone || "").replace(/[^0-9]/g, ""); if (n.startsWith("0")) n = "233" + n.slice(1); return "https://wa.me/" + n + "?text=" + encodeURIComponent(text()); };
+  box.innerHTML = `<section class="${C.card} space-y-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="text-title-md truncate">${esc(c.full_name)}</h2><p class="${C.mute}">${esc(c.phone || "No phone")}${c.location ? " · " + esc(c.location) : ""}</p></div></div>
+      <div class="grid grid-cols-3 gap-2 text-center"><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Price</div><div class="text-label-lg break-words">${money(tot)}</div></div><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Paid</div><div class="text-label-lg break-words">${money(paid)}</div></div><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Owes</div><div class="text-label-lg text-tertiary-container break-words">${money(bal)}</div></div></div>
+      ${purchases.length ? purchases.map(x => { const mine = pays.filter(p => p.purchase_id === x.purchase_id), pct = Number(x.total_price) ? Math.min(100, Math.round(Number(x.amount_paid) / Number(x.total_price) * 100)) : 0;
+        return `<div class="rounded-xl bg-surface-container-low p-3"><div class="flex justify-between gap-2"><b class="text-body-lg">${esc(x.product_name)}</b><span class="text-label-md rounded-full px-2.5 py-0.5 ${x.status === "active" ? "bg-primary-fixed text-on-primary-fixed" : "bg-surface-container-high text-on-surface-variant"}">${esc(x.status)}</span></div>
+        <div class="${C.mute}">${esc(x.plan_name)} · installment ${money(x.installment_amount)} · agent ${esc(x.agent_name)}</div>
+        <div class="h-2 rounded-full bg-surface-container-high mt-2 overflow-hidden"><div class="h-full bg-primary-container" style="width:${pct}%"></div></div><div class="${C.mute} mt-1">${pct}% paid · balance ${money(x.balance)}</div>
+        <div class="divide-y divide-outline-variant/40 mt-2">${mine.length ? mine.map(p => `<div class="flex justify-between py-1.5 text-body-md"><span>${esc(p.paid_on)}</span><b>${money(p.amount)}</b></div>`).join("") : `<div class="${C.mute} py-1.5">No payments yet.</div>`}</div></div>`; }).join("") : `<p class="${C.mute}">This customer has no purchases yet.</p>`}
+      <div class="grid grid-cols-2 gap-2"><a id="swa" class="${C.btn} text-center no-underline" href="${wa()}" target="_blank" rel="noopener">${ic("call", "text-[20px]")}<span>WhatsApp</span></a><button id="scsv" type="button" class="${C.btn2}">${ic("download", "text-[20px]")}<span>CSV</span></button></div></section>`;
+  $("scsv").onclick = () => cfCsvDownload("statement-" + c.full_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "-" + today() + ".csv", [["Customer", "Product", "Date", "Amount (GHS)", "Price (GHS)", "Balance (GHS)"], ...pays.map(p => { const x = purchases.find(y => y.purchase_id === p.purchase_id) || {}; return [c.full_name, x.product_name, p.paid_on, p.amount, x.total_price, x.balance]; })]);
 }
 
 /* ---------- catalogue ---------- */
@@ -523,7 +609,7 @@ const cfSteps=[
  {title:"Analytics",body:"Analytics summarizes payments visible to your account, shows daily collections and provides an agent breakdown. Voided payments are excluded.",target:"analytics"},
  {title:"Settings and offline payments",body:"Find Settings, Analytics, Account and Credit under the More tab. In Settings, choose your theme and colour. Review payments waiting on this phone and use Sync now when connected. A queued payment is not yet recorded or visible to the admin.",target:"settings"},
  {title:"Account",body:"Review your account details here and change your password after verifying your current password.",target:"account"},
- {title:"Credit and support",body:"The Credit page contains the project contact details for help. You can return to any section using the bottom navigation.",target:"credit"}
+ {title:"Credit and support",body:"The Credit page contains the project contact details for help. You can return to any section from the Menu button at the top right.",target:"credit"}
 ];
 let cfStep=0,cfActive=cfSteps;
 const cfDBName="creditflex-offline-v1",cfStore="pending-payments";
@@ -607,8 +693,8 @@ window.viewCreditflexSettings=async function(){
 async function cfRenderQueue(){const el=$("cf-queue-list");if(!el)return;const rows=await cfAll().catch(()=>[]);el.innerHTML=rows.length?rows.map(r=>'<div class="border-b border-slate-200 py-2"><div class="flex justify-between gap-2"><b>'+esc(r.customer_name||"Customer")+'</b><b>'+money(r.amount)+'</b></div><p class="text-sm opacity-70">'+esc(r.product_name||"Purchase")+' · '+esc(r.paid_on)+' · '+esc(r.status)+'</p>'+(r.last_error?'<p class="text-sm text-red-700">'+esc(r.last_error)+'</p>':'')+'</div>').join(""):'<p class="'+C.mute+'">No payments waiting to sync.</p>';}
 window.refreshCreditflexQueueCount=cfRenderQueue;
 window.viewCreditflexAccount=async function(){
- const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Account</h1><section class="'+C.card+' space-y-2"><div class="text-title-md">'+esc(S.me.full_name)+'</div><p class="'+C.mute+'">'+esc(S.me.email||"No email on file")+'</p><p class="'+C.mute+'">Role: '+esc(S.me.role)+'</p></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Change password</h2><form id="cf-password-form" class="space-y-3"><div><label class="'+C.lbl+'" for="cf-current">Current password</label><input id="cf-current" type="password" autocomplete="current-password" class="'+C.inp+'" required></div><div><label class="'+C.lbl+'" for="cf-new">New password</label><input id="cf-new" type="password" autocomplete="new-password" minlength="10" class="'+C.inp+'" required><p class="'+C.mute+' mt-1">Use at least 10 characters.</p></div><div><label class="'+C.lbl+'" for="cf-confirm">Confirm new password</label><input id="cf-confirm" type="password" autocomplete="new-password" minlength="10" class="'+C.inp+'" required></div><button id="cf-password-save" class="'+C.btn+'">Update password</button><div id="cf-password-msg"></div></form></section>';
- $("cf-password-form").onsubmit=async e=>{e.preventDefault();const b=$("cf-password-save"),current=$("cf-current").value,next=$("cf-new").value,confirmPass=$("cf-confirm").value;if(next.length<10)return say("cf-password-msg","The new password must be at least 10 characters.");if(next!==confirmPass)return say("cf-password-msg","The new passwords do not match.");if(next===current)return say("cf-password-msg","Choose a password different from your current password.");busy(b,true);const auth=await sb.auth.signInWithPassword({email:S.me.email,password:current});if(auth.error){busy(b,false);return say("cf-password-msg","Current password could not be verified.");}const changed=await sb.auth.updateUser({password:next});busy(b,false);if(changed.error)return say("cf-password-msg",changed.error.message);$("cf-current").value="";$("cf-new").value="";$("cf-confirm").value="";say("cf-password-msg","Password updated successfully.",true);};
+ const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Account</h1><section class="'+C.card+' space-y-2"><div class="text-title-md">'+esc(S.me.full_name)+'</div><p class="'+C.mute+'">'+esc(S.me.email||"No email on file")+'</p><p class="'+C.mute+'">Role: '+esc(S.me.role)+'</p></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Change password</h2><form id="cf-password-form" class="space-y-3"><div><label class="'+C.lbl+'" for="cf-current">Current password</label><input id="cf-current" type="password" autocomplete="current-password" class="'+C.inp+'" required></div><div><label class="'+C.lbl+'" for="cf-new">New password</label><input id="cf-new" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required><p class="'+C.mute+' mt-1">Use at least 8 characters with letters and numbers.</p></div><div><label class="'+C.lbl+'" for="cf-confirm">Confirm new password</label><input id="cf-confirm" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required></div><button id="cf-password-save" class="'+C.btn+'">Update password</button><div id="cf-password-msg"></div></form></section>';
+ $("cf-password-form").onsubmit=async e=>{e.preventDefault();const b=$("cf-password-save"),current=$("cf-current").value,next=$("cf-new").value,confirmPass=$("cf-confirm").value;{const pwIssue=cfPwIssue(next);if(pwIssue)return say("cf-password-msg",pwIssue);}if(next!==confirmPass)return say("cf-password-msg","The new passwords do not match.");if(next===current)return say("cf-password-msg","Choose a password different from your current password.");busy(b,true);const auth=await sb.auth.signInWithPassword({email:S.me.email,password:current});if(auth.error){busy(b,false);return say("cf-password-msg","Current password could not be verified.");}const changed=await sb.auth.updateUser({password:next});busy(b,false);if(changed.error)return say("cf-password-msg",changed.error.message);$("cf-current").value="";$("cf-new").value="";$("cf-confirm").value="";say("cf-password-msg","Password updated successfully.",true);};
 };
 window.viewCreditflexFinancial=async function(){
  const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Financial review</h1><p class="'+C.mute+'">Admin-only payment review, reversals and audit history.</p><div id="cf-financial-list">'+loading+'</div>';
@@ -624,6 +710,49 @@ window.viewCreditflexFinancial=async function(){
  $("cf-financial-list").innerHTML='<section class="'+C.card+' space-y-3"><div class="flex items-center justify-between gap-2"><h2 class="text-title-md">Recent payments</h2><span class="'+C.mute+'">'+rows.length+' shown</span></div>'+(rows.length?rows.map(p=>{const x=purchases.get(String(p.purchase_id))||{};return '<article class="border-b border-outline-variant/50 py-3 space-y-2"><div class="flex justify-between gap-3"><div class="min-w-0"><b>'+esc(x.customer_name||("Purchase #"+p.purchase_id))+'</b><p class="'+C.mute+'">'+esc(x.product_name||"")+' · '+esc(people.get(p.collected_by)||"Agent")+'</p><p class="'+C.mute+'">'+esc(p.paid_on)+' · '+esc(String(p.created_at||"").replace("T"," ").slice(0,16))+'</p></div><div class="text-right shrink-0"><b>'+money(p.amount)+'</b><p class="text-xs '+(p.voided_at?"text-red-600":"text-emerald-700")+'">'+(p.voided_at?"Reversed":"Recorded")+'</p></div></div>'+(p.voided_at?'<p class="text-sm text-red-700">Reason: '+esc(p.void_reason||"Not provided")+'</p>':'<button type="button" data-void="'+p.id+'" class="'+C.btn2+' w-full">Reverse payment</button>')+'</article>';}).join(""):'<p class="'+C.mute+'">No payments found.</p>')+'</section><section class="'+C.card+' mt-4 space-y-3"><h2 class="text-title-md">Financial audit trail</h2>'+(audit.error?'<p class="text-red-700">'+esc(audit.error.message)+'</p>':(audit.data||[]).length?(audit.data||[]).map(a=>'<article class="border-b border-outline-variant/50 py-2"><div class="flex justify-between gap-2"><b>'+esc(a.event_type)+'</b><span class="'+C.mute+'">Payment #'+esc(a.payment_id)+'</span></div><p class="'+C.mute+'">'+esc(people.get(a.actor_id)||"System")+' · '+esc(String(a.event_at||"").replace("T"," ").slice(0,16))+'</p><details class="mt-2"><summary class="text-sm underline">View recorded details</summary><pre class="text-xs whitespace-pre-wrap break-words mt-2">'+esc(JSON.stringify({old:a.old_payment,new:a.new_payment},null,2))+'</pre></details></article>').join(""):'<p class="'+C.mute+'">No audit entries found.</p>')+'</section>';
  document.querySelectorAll("[data-void]").forEach(btn=>btn.onclick=async()=>{const reason=prompt("Enter the reason for reversing this payment (at least 8 characters):");if(reason===null)return;if(reason.trim().length<8)return alert("The reason must be at least 8 characters.");if(!confirm("Reverse this payment? The action will be recorded in the financial audit trail."))return;btn.disabled=true;const result=await sb.rpc("void_payment",{p_payment_id:Number(btn.dataset.void),p_reason:reason.trim()});if(result.error){btn.disabled=false;return alert(result.error.message);}await viewCreditflexFinancial();});
 };
+
+window.viewCreditflexExport = async function () {
+  const v = $("view");
+  if (S.me.role !== "admin") { S.tab = "collections"; return renderShell(); }
+  let last = null; try { last = localStorage.getItem("creditflex-last-export"); } catch (e) {}
+  v.innerHTML = `<h1 class="${C.h1}">Export data</h1>
+    <section class="${C.card} space-y-3"><p class="${C.mute}">Download your records as CSV files you can open in Excel or keep in Google Drive as a backup. Do this at least once a week.</p>
+      <div class="text-label-md ${last ? "text-on-surface-variant" : "text-error"}">${last ? "Last export on this phone: " + esc(new Date(last).toLocaleString()) : "You have not exported anything from this phone yet."}</div>
+      <button id="x-all" class="${C.btn}" type="button">${ic("download", "text-[22px]")}<span>Download everything</span></button>
+      <div class="grid grid-cols-1 gap-2"><button id="x-pay" class="${C.btn2}" type="button">Payments</button><button id="x-cus" class="${C.btn2}" type="button">Customers</button><button id="x-pur" class="${C.btn2}" type="button">Purchases and balances</button></div>
+      <div id="x-msg"></div></section>`;
+  const stamp = () => today();
+  const staffName = async () => { const m = {}; (await cfFetchAll("staff", "id,full_name", "full_name")).forEach(x => m[x.id] = x.full_name); return m; };
+  const jobs = {
+    async pay() {
+      const [pays, led, names] = await Promise.all([cfFetchAll("payments", "id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason", "id"), cfFetchAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name", "purchase_id"), staffName()]);
+      const L = {}; led.forEach(x => L[x.purchase_id] = x);
+      cfCsvDownload("creditflex-payments-" + stamp() + ".csv", [["Payment ID", "Date", "Amount (GHS)", "Customer", "Phone", "Product", "Collected by", "Recorded at", "Cancelled", "Cancel reason"], ...pays.map(p => { const l = L[p.purchase_id] || {}; return [p.id, p.paid_on, p.amount, l.customer_name, l.customer_phone, l.product_name, names[p.collected_by] || "", p.created_at, p.voided_at ? "yes" : "no", p.void_reason || ""]; })]);
+      return pays.length;
+    },
+    async cus() {
+      const [cs, names] = await Promise.all([cfFetchAll("customers", "id,full_name,phone,location,registered_by,created_at", "id"), staffName()]);
+      cfCsvDownload("creditflex-customers-" + stamp() + ".csv", [["ID", "Name", "Phone", "Location", "Registered by", "Created"], ...cs.map(c => [c.id, c.full_name, c.phone, c.location, names[c.registered_by] || "", c.created_at])]);
+      return cs.length;
+    },
+    async pur() {
+      const led = await cfFetchAll("purchase_ledger", "*", "purchase_id");
+      cfCsvDownload("creditflex-purchases-" + stamp() + ".csv", [["Purchase ID", "Customer", "Phone", "Product", "Plan", "Agent", "Total price", "Installment", "Paid", "Balance", "Payments made", "Start date", "Status"], ...led.map(x => [x.purchase_id, x.customer_name, x.customer_phone, x.product_name, x.plan_name, x.agent_name, x.total_price, x.installment_amount, x.amount_paid, x.balance, x.payments_made, x.start_date, x.status])]);
+      return led.length;
+    }
+  };
+  const run = async (names, btn) => {
+    busy(btn, true); say("x-msg", "");
+    try { const counts = []; for (const n of names) counts.push(await jobs[n]()); try { localStorage.setItem("creditflex-last-export", new Date().toISOString()); } catch (e) {} say("x-msg", "Done. " + counts.join(" + ") + " rows exported.", true); }
+    catch (e) { say("x-msg", e.message || "Export failed."); }
+    busy(btn, false);
+  };
+  $("x-all").onclick = () => run(["pay","cus","pur"], $("x-all"));
+  $("x-pay").onclick = () => run(["pay"], $("x-pay"));
+  $("x-cus").onclick = () => run(["cus"], $("x-cus"));
+  $("x-pur").onclick = () => run(["pur"], $("x-pur"));
+};
+
 window.viewCreditflexCredit=function(){const v=$("view");
  v.innerHTML='<h1 class="'+C.h1+'">Credit</h1>'
  +'<section class="'+C.card+' space-y-3"><div class="flex items-center gap-3"><div class="w-12 h-12 rounded-xl bg-primary-container text-on-primary flex items-center justify-center">'+ic("payments","fill text-[26px]")+'</div><div><div class="text-title-md">Creditflex Agents</div><div class="'+C.mute+'">Instalment collections for field agents</div></div></div></section>'

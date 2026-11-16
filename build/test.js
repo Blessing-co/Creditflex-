@@ -19,7 +19,7 @@ const stub = cfg => `(function(){
       {purchase_id:2,customer_id:12,product_id:22,customer_name:'Kofi Boateng',customer_phone:'0201112233',product_name:'Nasco 32 inch TV',plan_name:'30-day daily',balance:420,amount_paid:80,total_price:500,payments_made:4,installment_amount:20,status:'active'}],
     products:[{id:1,name:'Blender',price:270,image_url:null,in_stock:true}],
     payment_plans:[{id:1,name:'30-day daily',frequency:'daily',installments:30}],
-    customers:[{id:1,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'}],
+    customers:[{id:11,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'},{id:1,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'}],
     payments:[{id:5,purchase_id:1,amount:30,paid_on:'2026-11-15',collected_by:'u1',created_at:new Date().toISOString(),voided_at:null}],
     payment_audit_log:[],
     staff:[{id:'u1',full_name:'Kofi Mensah',email:'k@x.com',phone:'',role:cfg.role,status:'active',supervisor_id:null}]
@@ -28,7 +28,7 @@ const stub = cfg => `(function(){
     portfolio_summary:[{agent_name:'Kofi Mensah',active_purchases:2,outstanding:510}],
     check_recent_payment_duplicate:!!cfg.dup, complete_agent_onboarding:null, void_payment:null, register_customer:null, admin_update_staff:null};
   function builder(t){const b={_single:false};
-    ['select','eq','order','limit','gte','lte','is','in'].forEach(m=>b[m]=()=>b);
+    ['select','eq','order','limit','gte','lte','is','in','range'].forEach(m=>b[m]=()=>b);
     b.maybeSingle=()=>{b._single=true;return b;};
     b.insert=row=>{calls.push(['insert',t,row]);return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
     b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:null);
@@ -56,6 +56,7 @@ async function open(browser, cfg, ctxOpts = {}) {
   await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
   return { page, ctx, errors };
 }
+const nav = async (p, k) => { if (await p.$eval('#menuPanel', e => e.classList.contains('hidden'))) await p.click('#menuBtn'); await p.click('#menuPanel button[data-t="' + k + '"]'); };
 const shot = (p, n) => p.screenshot({ path: path.join(shots, n + ".png"), fullPage: false });
 const calls = p => p.evaluate(() => window.__calls);
 const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process.exitCode = 1; };
@@ -80,26 +81,46 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   // 2. returning agent: no tour; More menu; settings; credit
   t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "no tour for returning agent");
-  ok((await p.$$("nav button")).length === 5, "bottom bar has 5 buttons");
-  await p.click('nav button[data-t="more"]'); await p.waitForTimeout(300); await shot(p, "03-more-agent");
-  ok((await p.$$("[data-go]")).length === 4, "agent More menu has 4 items");
-  await p.click('[data-go="settings"]'); await p.waitForTimeout(500); await shot(p, "04-settings");
+  ok(await p.$("nav.fixed.bottom-0") === null, "no bottom bar any more");
+  await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "03-menu-agent");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 8, "agent menu has 8 pages");
+  { const bx = await (await p.$("#menuPanel")).boundingBox(); ok(bx.x + bx.width > 335 && bx.y < 90, "menu sits at the top right"); }
+  await nav(p, "settings"); await p.waitForTimeout(500); await shot(p, "04-settings");
   await p.click('#cf-theme button[data-v="dark"]'); await p.waitForTimeout(200); await shot(p, "05-settings-dark");
   await p.click('#cf-accents button[data-a="blue"]'); await p.waitForTimeout(200); await shot(p, "06-settings-blue-dark");
   await p.click('#cf-theme button[data-v="light"]');
-  await p.click('nav button[data-t="more"]'); await p.click('[data-go="credit"]'); await p.waitForTimeout(300); await shot(p, "07-credit");
+  await nav(p, 'credit'); await p.waitForTimeout(300); await shot(p, "07-credit");
   const body = await p.textContent("body");
   ok(body.includes("020 670 9055") && body.includes("Blisscoenergy001@gmail.com"), "credit page shows phone and email");
   ok(await p.$('a[href="https://wa.me/233206709055"]') !== null, "credit page has WhatsApp link");
-  await p.click('nav button[data-t="more"]'); await p.click('[data-go="analytics"]'); await p.waitForTimeout(600); await shot(p, "08-analytics");
-  await p.click('nav button[data-t="more"]'); await p.click('[data-go="settings"]'); await p.waitForTimeout(300); await p.click("#cf-replay"); await p.waitForTimeout(300);
+  await nav(p, 'analytics'); await p.waitForTimeout(600); await shot(p, "08-analytics");
+  await nav(p, 'settings'); await p.waitForTimeout(300); await p.click("#cf-replay"); await p.waitForTimeout(300);
   ok(await p.$("#cf-w-go") !== null, "Replay training works from Settings");
   await p.click("#cf-w-skip"); await p.waitForTimeout(300);
+  // customer statement
+  await nav(p, "register"); await p.waitForTimeout(600);
+  ok(await p.$('[data-c="11"]') !== null, "Customers tab lists customers");
+  await p.fill("#sq", "ama"); await p.click('[data-c="11"]'); await p.waitForTimeout(500); await shot(p, "14-statement");
+  const st = await p.textContent("#sbox");
+  ok(st.includes("Ama Serwaa") && st.includes("90.00") && st.includes("2026-11-15"), "statement shows balance and payment history");
+  ok((await p.getAttribute("#swa", "href")).startsWith("https://wa.me/233244128901?text="), "statement WhatsApp link uses the customer number");
+  await p.click('[data-cm="new"]'); await p.waitForTimeout(400);
+  ok(await p.$("#rf") !== null, "New customer form still reachable");
+  // password rules
+  await nav(p, "account"); await p.waitForTimeout(300);
+  await p.fill("#cf-current", "OldPass123"); await p.fill("#cf-new", "123456"); await p.fill("#cf-confirm", "123456");
+  await p.evaluate(() => { document.getElementById("cf-new").removeAttribute("minlength"); document.getElementById("cf-confirm").removeAttribute("minlength"); });
+  await p.click("#cf-password-save"); await p.waitForTimeout(200);
+  ok((await p.textContent("#cf-password-msg")).includes("at least 8"), "short password rejected");
+  await p.fill("#cf-new", "abcdefghij"); await p.fill("#cf-confirm", "abcdefghij"); await p.click("#cf-password-save"); await p.waitForTimeout(200);
+  ok((await p.textContent("#cf-password-msg")).includes("letters and numbers"), "letters-only password rejected");
+  await p.fill("#cf-new", "password1"); await p.fill("#cf-confirm", "password1"); await p.click("#cf-password-save"); await p.waitForTimeout(200);
+  ok((await p.textContent("#cf-password-msg")).includes("too easy"), "common password rejected");
   errs.push(...t.errors); await t.ctx.close();
 
   // 3. pay flow with a same-day duplicate
   t = await open(browser, { role: "agent", onboarded: true, dup: true }); p = t.page;
-  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(700);
+  await nav(p, 'pay'); await p.waitForTimeout(700);
   ok(await p.$(".pick") !== null, "Record payment page loads with customers (helper bug fixed)");
   await p.click('.pick[data-id="1"]'); await p.waitForTimeout(600); await shot(p, "09-pay-dup-banner");
   ok((await p.textContent("#dup")).includes("Already paid today"), "same-day banner shown on selecting customer");
@@ -113,15 +134,15 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
 
   // 4. no duplicate -> saves straight away
   t = await open(browser, { role: "agent", onboarded: true, dup: false }); p = t.page;
-  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(600); await p.click('.pick[data-id="2"]'); await p.waitForTimeout(400);
+  await nav(p, 'pay'); await p.waitForTimeout(600); await p.click('.pick[data-id="2"]'); await p.waitForTimeout(400);
   ok((await p.textContent("#dup")) === "", "no banner when nothing paid today");
   await p.click("#pb"); await p.waitForTimeout(600);
   ok((await calls(p)).filter(c => c[0] === "insert").length === 1, "single Save works when no duplicate");
 
   // 5. offline queue then sync
-  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(500);
+  await nav(p, 'pay'); await p.waitForTimeout(500);
   await t.ctx.setOffline(true); await p.waitForTimeout(300);
-  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(700);
+  await nav(p, 'pay'); await p.waitForTimeout(700);
   ok(await p.$(".pick") !== null, "offline: cached customer list is shown");
   await p.click('.pick[data-id="2"]'); await p.waitForTimeout(400); await p.fill("#amt", "20"); await p.click("#pb"); await p.waitForTimeout(700);
   await shot(p, "11-offline-queued");
@@ -134,10 +155,15 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   // 6. admin
   t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "admin never sees the first-login tour");
-  await p.click('nav button[data-t="more"]'); await p.waitForTimeout(300); await shot(p, "12-more-admin");
-  ok((await p.$$("[data-go]")).length === 6, "admin More menu has 6 items");
-  await p.click('[data-go="financial"]'); await p.waitForTimeout(600); await shot(p, "13-financial");
-  await p.click('nav button[data-t="more"]'); await p.click('[data-go="staff"]'); await p.waitForTimeout(500);
+  await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "12-menu-admin");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 11, "admin menu has 11 pages");
+  await nav(p, "financial"); await p.waitForTimeout(600); await shot(p, "13-financial");
+  await nav(p, 'staff'); await p.waitForTimeout(500);
+  await nav(p, "export"); await p.waitForTimeout(400); await shot(p, "15-export");
+  const dl = p.waitForEvent("download"); await p.click("#x-pay"); const d = await dl;
+  ok(/creditflex-payments-.*\.csv/.test(d.suggestedFilename()), "admin can download payments CSV");
+  await p.waitForTimeout(400);
+  ok((await p.textContent("#x-msg")).includes("exported"), "export reports success");
   errs.push(...t.errors); await t.ctx.close();
 
   ok(errs.length === 0, "no JavaScript errors" + (errs.length ? ": " + JSON.stringify(errs) : ""));
