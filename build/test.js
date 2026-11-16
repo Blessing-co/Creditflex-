@@ -1,176 +1,145 @@
+// Headless UI test with a fake Supabase. Run:  node test.js   (needs: npm install, and `npx playwright` browsers)
 const { chromium } = require("playwright");
-const fs = require("fs");
-const path = require("path");
-const dir = __dirname;
-const shots = path.join(dir, "shots");
-fs.mkdirSync(shots, { recursive: true });
-const file = process.argv[2] || path.join(dir, "index.html");
+const fs = require("fs"), path = require("path"), http = require("http");
+const dir = __dirname, shots = path.join(dir, "shots"); fs.mkdirSync(shots, { recursive: true });
+const root = path.join(dir, "..");
 
-const svg = c => "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect width='300' height='300' fill='${c}'/><circle cx='150' cy='150' r='70' fill='white' opacity='.6'/></svg>`).replace(/'/g, "%27");
+const server = http.createServer((q, r) => {
+  const f = path.join(root, q.url.split("?")[0] === "/" ? "index.html" : q.url.split("?")[0]);
+  if (!f.startsWith(root) || !fs.existsSync(f)) { r.writeHead(404); return r.end(); }
+  r.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript" : "text/html" }); r.end(fs.readFileSync(f));
+});
 
-const stub = (cfg) => `
-(function(){
-  const cfg = ${JSON.stringify(cfg)};
-  const calls = []; window.__calls = calls;
-  const D = {
-    staff_me: { id:'u1', full_name:'Kofi Mensah', role: cfg.role, status: cfg.status, email:'k@x.com' },
-    purchase_ledger: [
-      { purchase_id:1, customer_name:'Ama Serwaa', customer_phone:'0244128901', product_name:'Bruhm Blender 2-in-1', plan_name:'8-week weekly', balance:90, amount_paid:180, total_price:270, payments_made:6, installment_amount:30, status:'active' },
-      { purchase_id:2, customer_name:'Kofi Mensah-Boateng Junior', customer_phone:'0201112233', product_name:'Nasco 32 inch Satellite TV with long name', plan_name:'30-day daily', balance:420, amount_paid:80, total_price:500, payments_made:4, installment_amount:20, status:'active' },
-      { purchase_id:3, customer_name:'Akosua Badu', customer_phone:'', product_name:'Samsung Microwave 23L', plan_name:'60-day daily', balance:150, amount_paid:0, total_price:150, payments_made:0, installment_amount:2.5, status:'active' }
-    ],
-    products: [
-      { id:1, name:'Bruhm Blender 2-in-1', price:270, image_url:'${svg("#0b6b4f")}', in_stock:true },
-      { id:2, name:'Nasco 32 inch Satellite TV', price:500, image_url:'${svg("#885200")}', in_stock:false },
-      { id:3, name:'Office Chair', price:320, image_url:null, in_stock:true },
-      { id:4, name:'Samsung Microwave 23L', price:150, image_url:'${svg("#535f71")}', in_stock:true }
-    ],
-    customers: [ { id:1, full_name:'Ama Serwaa', phone:'0244128901', location:'Makola', registered_by:'u1', created_at:'2026-11-14T09:00:00Z' } ],
-    payment_plans: [ { id:1, name:'30-day daily', frequency:'daily', installments:30 }, { id:2, name:'8-week weekly', frequency:'weekly', installments:8 } ],
-    staff: [
-      { id:'s1', full_name:'Yaw Asante', email:'yaw@x.com', phone:'0240000001', role:'agent', status:'pending', supervisor_id:null },
-      { id:'u1', full_name:'Kofi Mensah', email:'k@x.com', phone:'0240000002', role:'admin', status:'active', supervisor_id:null },
-      { id:'s2', full_name:'Efua Owusu', email:'efua@x.com', phone:'', role:'supervisor', status:'active', supervisor_id:null },
-      { id:'s3', full_name:'Kwame Old', email:'kw@x.com', phone:'', role:'agent', status:'disabled', supervisor_id:'s2' }
-    ]
+const stub = cfg => `(function(){
+  const cfg=${JSON.stringify(cfg)}; const calls=[]; window.__calls=calls;
+  const D={
+    staff_me:{id:'u1',full_name:'Kofi Mensah',role:cfg.role,status:'active',email:'k@x.com',onboarding_completed_at:cfg.onboarded?'2026-11-01T00:00:00Z':null},
+    purchase_ledger:[
+      {purchase_id:1,customer_id:11,product_id:21,customer_name:'Ama Serwaa',customer_phone:'0244128901',product_name:'Bruhm Blender 2-in-1',plan_name:'8-week weekly',balance:90,amount_paid:180,total_price:270,payments_made:6,installment_amount:30,status:'active'},
+      {purchase_id:2,customer_id:12,product_id:22,customer_name:'Kofi Boateng',customer_phone:'0201112233',product_name:'Nasco 32 inch TV',plan_name:'30-day daily',balance:420,amount_paid:80,total_price:500,payments_made:4,installment_amount:20,status:'active'}],
+    products:[{id:1,name:'Blender',price:270,image_url:null,in_stock:true}],
+    payment_plans:[{id:1,name:'30-day daily',frequency:'daily',installments:30}],
+    customers:[{id:1,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'}],
+    payments:[{id:5,purchase_id:1,amount:30,paid_on:'2026-11-15',collected_by:'u1',created_at:new Date().toISOString(),voided_at:null}],
+    payment_audit_log:[],
+    staff:[{id:'u1',full_name:'Kofi Mensah',email:'k@x.com',phone:'',role:cfg.role,status:'active',supervisor_id:null}]
   };
-  const RPC = {
-    collection_summary: cfg.emptyCollections ? [] : [
-      { paid_on:'2026-11-14', agent_name:'Kofi Mensah', payments_count:12, total:360 },
-      { paid_on:'2026-11-14', agent_name:'Efua Owusu', payments_count:1, total:1234567.5 }
-    ],
-    portfolio_summary: [ { agent_name:'Kofi Mensah', active_purchases:14, outstanding:5230 }, { agent_name:'Efua Owusu', active_purchases:2, outstanding:640 } ],
-    register_customer: null, admin_update_staff: null
-  };
-  function builder(table){
-    const b = { _single:false, _err:null };
-    ['select','eq','order','limit','gte','lte'].forEach(m => b[m] = () => b);
-    b.maybeSingle = () => { b._single = true; return b; };
-    b.insert = row => { calls.push(['insert', table, row]); return b; };
-    b.update = row => { calls.push(['update', table, row]); return b; };
-    b.then = (res, rej) => {
-      let data = table === 'staff' && b._single ? D.staff_me : D[table];
-      if (cfg.failTable === table) return Promise.resolve({ data:null, error:{ message:'permission denied for table '+table } }).then(res, rej);
-      return Promise.resolve({ data, error:null }).then(res, rej);
-    };
-    return b;
-  }
-  const sbm = {
-    auth: {
-      getSession: async () => ({ data:{ session: cfg.loggedOut ? null : {} } }),
-      getUser: async () => ({ data:{ user:{ id:'u1' } } }),
-      signOut: async () => ({}), signInWithPassword: async a => { calls.push(['signin', a.email]); return { error:{ message:'Invalid login credentials' } }; },
-      resetPasswordForEmail: async (e,o) => { calls.push(['reset', e, o.redirectTo]); return { error:null }; }, updateUser: async a => { calls.push(['updateUser']); return { error:null }; }, signUp: async a => { calls.push(['signup', a.email]); return { error:null }; },
-      onAuthStateChange: () => {}
-    },
-    from: t => builder(t),
-    rpc: async (n, a) => { calls.push(['rpc', n, a]); return { data: RPC[n] ?? null, error:null }; },
-    storage: { from: () => ({ upload: async () => ({ error:null }), getPublicUrl: () => ({ data:{ publicUrl:'x' } }) }) }
-  };
-  window.supabase = { createClient: () => sbm };
+  const RPC={collection_summary:[{paid_on:'2026-11-15',agent_name:'Kofi Mensah',payments_count:3,total:90}],
+    portfolio_summary:[{agent_name:'Kofi Mensah',active_purchases:2,outstanding:510}],
+    check_recent_payment_duplicate:!!cfg.dup, complete_agent_onboarding:null, void_payment:null, register_customer:null, admin_update_staff:null};
+  function builder(t){const b={_single:false};
+    ['select','eq','order','limit','gte','lte','is','in'].forEach(m=>b[m]=()=>b);
+    b.maybeSingle=()=>{b._single=true;return b;};
+    b.insert=row=>{calls.push(['insert',t,row]);return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
+    b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:null);
+      return Promise.resolve({data,error:null}).then(res,rej);};
+    return b;}
+  const sbm={auth:{getSession:async()=>({data:{session:cfg.loggedOut?null:{}}}),getUser:async()=>({data:{user:{id:'u1'}}}),
+    signOut:async()=>({}),signInWithPassword:async()=>({error:{message:'Invalid login credentials'}}),signUp:async()=>({error:null}),
+    resetPasswordForEmail:async()=>({error:null}),updateUser:async()=>({error:null}),onAuthStateChange:()=>{}},
+    from:t=>builder(t), rpc:async(n,a)=>{calls.push(['rpc',n,a]);return{data:RPC[n]??null,error:null};},
+    storage:{from:()=>({upload:async()=>({error:null}),getPublicUrl:()=>({data:{publicUrl:'x'}})})}};
+  window.supabase={createClient:()=>sbm};
 })();`;
 
-async function newPage(browser, cfg) {
-  const ctx = await browser.newContext({ viewport: { width: 360, height: 800 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
-  const page = await ctx.newPage();
-  const errors = [];
+async function open(browser, cfg, ctxOpts = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, serviceWorkers: "block", ...ctxOpts });
+  const page = await ctx.newPage(); const errors = [];
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
-  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push("console: " + m.text()); });
-  await page.route("**/*", async route => {
+  page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|net::ERR/.test(m.text())) errors.push("console: " + m.text()); });
+  await page.route("**/*", route => {
     const u = route.request().url();
-    if (u.startsWith("file://")) return route.continue();
+    if (u.startsWith("http://localhost")) return route.continue();
     if (u.includes("@supabase/supabase-js")) return route.fulfill({ contentType: "application/javascript", body: stub(cfg) });
-    if (u.includes("fonts.googleapis.com/css2") && u.includes("Public+Sans")) {
-      const w = [400, 500, 600, 700, 800].map(w => `@font-face{font-family:'Public Sans';font-weight:${w};src:url(https://fonts.gstatic.com/local/ps-${w}.woff2) format('woff2');}`).join("");
-      return route.fulfill({ contentType: "text/css", body: w });
-    }
-    if (u.includes("fonts.googleapis.com/css2") && u.includes("Material+Symbols")) {
-      return route.fulfill({ contentType: "text/css", body: `@font-face{font-family:'Material Symbols Outlined';font-style:normal;font-weight:400;src:url(https://fonts.gstatic.com/local/ms.woff2) format('woff2');}` });
-    }
-    if (u.includes("fonts.gstatic.com/local/ms.woff2")) return route.fulfill({ contentType: "font/woff2", body: fs.readFileSync(path.join(dir, "node_modules/material-symbols/material-symbols-outlined.woff2")) });
-    const m = u.match(/local\/ps-(\d+)\.woff2/);
-    if (m) return route.fulfill({ contentType: "font/woff2", body: fs.readFileSync(path.join(dir, `node_modules/@fontsource/public-sans/files/public-sans-latin-${m[1]}-normal.woff2`)) });
     return route.abort();
   });
-  await page.goto("file://" + file);
-  await page.waitForTimeout(700);
-  return { page, errors, ctx };
+  await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
+  return { page, ctx, errors };
 }
-
-async function metrics(page, label) {
-  const m = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth, icons: document.documentElement.classList.contains("icons") }));
-  console.log(label, JSON.stringify(m), m.sw > m.iw ? "  <-- HORIZONTAL OVERFLOW" : "");
-}
-const full = (page, name) => page.screenshot({ path: path.join(shots, name + ".png"), fullPage: true });
+const shot = (p, n) => p.screenshot({ path: path.join(shots, n + ".png"), fullPage: false });
+const calls = p => p.evaluate(() => window.__calls);
+const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process.exitCode = 1; };
 
 (async () => {
-  const browser = await chromium.launch();
-  const allErrors = [];
+  await new Promise(r => server.listen(8765, r));
+  const browser = await chromium.launch(); const errs = [];
 
-  // 1. login + signup
-  let t = await newPage(browser, { role: "admin", status: "active", loggedOut: true });
-  await metrics(t.page, "login"); await full(t.page, "01-login");
-  await t.page.fill('#em','a@b.com'); await t.page.click('#fp'); await t.page.waitForTimeout(200); console.log('reset call:', JSON.stringify((await t.page.evaluate(() => window.__calls)).filter(c => c[0]==='reset'))); await full(t.page, '02b-forgot');
-  await t.page.click("#swap"); await t.page.waitForTimeout(200); await full(t.page, "02-signup");
-  await t.page.click("#swap"); await t.page.fill("#em", "a@b.com"); await t.page.fill("#pw", "secret1"); await t.page.click("#authBtn"); await t.page.waitForTimeout(300);
-  await full(t.page, "03-login-error");
-  allErrors.push(...t.errors); await t.ctx.close();
+  // 1. first sign-in tour, agent
+  let t = await open(browser, { role: "agent", onboarded: false }); let p = t.page;
+  ok(await p.$("#cf-w-go") !== null, "agent first login shows the tour welcome");
+  await shot(p, "01-tour-welcome");
+  await p.click('.cf-pick label:nth-child(3) input'); await p.click('.cf-pick label:nth-child(4) input');
+  await p.click("#cf-w-go"); await p.waitForTimeout(300);
+  ok((await p.textContent("#cf-tour-count")) === "STEP 1 OF 6", "tour has 6 steps after un-ticking 2");
+  await shot(p, "02-tour-step");
+  await p.click("#cf-tour-all"); await p.waitForTimeout(400);
+  ok((await calls(p)).some(c => c[1] === "complete_agent_onboarding"), "skipping saves onboarding as complete");
+  ok(await p.$("#cf-tour") === null, "tour closed after skip");
+  errs.push(...t.errors); await t.ctx.close();
 
-  // 2. pending + disabled
-  for (const st of ["pending", "disabled"]) {
-    t = await newPage(browser, { role: "agent", status: st });
-    await metrics(t.page, "blocked-" + st); await full(t.page, "04-blocked-" + st);
-    allErrors.push(...t.errors); await t.ctx.close();
-  }
+  // 2. returning agent: no tour; More menu; settings; credit
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  ok(await p.$("#cf-tour") === null, "no tour for returning agent");
+  ok((await p.$$("nav button")).length === 5, "bottom bar has 5 buttons");
+  await p.click('nav button[data-t="more"]'); await p.waitForTimeout(300); await shot(p, "03-more-agent");
+  ok((await p.$$("[data-go]")).length === 4, "agent More menu has 4 items");
+  await p.click('[data-go="settings"]'); await p.waitForTimeout(500); await shot(p, "04-settings");
+  await p.click('#cf-theme button[data-v="dark"]'); await p.waitForTimeout(200); await shot(p, "05-settings-dark");
+  await p.click('#cf-accents button[data-a="blue"]'); await p.waitForTimeout(200); await shot(p, "06-settings-blue-dark");
+  await p.click('#cf-theme button[data-v="light"]');
+  await p.click('nav button[data-t="more"]'); await p.click('[data-go="credit"]'); await p.waitForTimeout(300); await shot(p, "07-credit");
+  const body = await p.textContent("body");
+  ok(body.includes("020 670 9055") && body.includes("Blisscoenergy001@gmail.com"), "credit page shows phone and email");
+  ok(await p.$('a[href="https://wa.me/233206709055"]') !== null, "credit page has WhatsApp link");
+  await p.click('nav button[data-t="more"]'); await p.click('[data-go="analytics"]'); await p.waitForTimeout(600); await shot(p, "08-analytics");
+  await p.click('nav button[data-t="more"]'); await p.click('[data-go="settings"]'); await p.waitForTimeout(300); await p.click("#cf-replay"); await p.waitForTimeout(300);
+  ok(await p.$("#cf-w-go") !== null, "Replay training works from Settings");
+  await p.click("#cf-w-skip"); await p.waitForTimeout(300);
+  errs.push(...t.errors); await t.ctx.close();
 
-  // 3. admin, all tabs
-  t = await newPage(browser, { role: "admin", status: "active" });
-  const p = t.page;
-  await metrics(p, "collections"); await full(p, "10-collections");
-  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(400);
-  await metrics(p, "pay"); await full(p, "11-pay-list");
-  await p.click('.pick[data-id="1"]'); await p.waitForTimeout(500);
-  await metrics(p, "pay-selected"); await full(p, "12-pay-selected");
-  await p.click("#cFull"); const full_v = await p.inputValue("#amt");
-  await p.click("#cInst"); const inst_v = await p.inputValue("#amt");
-  console.log("chips: full =", full_v, " installment =", inst_v);
-  await p.fill("#amt", "30"); await p.click("#pb"); await p.waitForTimeout(600);
-  console.log("payment insert:", JSON.stringify((await p.evaluate(() => window.__calls)).filter(c => c[0] === "insert")));
-  await metrics(p, "pay-after-save"); await full(p, "13-pay-saved");
-  await p.fill("#q", "zzz"); await p.waitForTimeout(200); await full(p, "14-pay-empty");
-  await p.click('nav button[data-t="register"]'); await p.waitForTimeout(500);
-  await metrics(p, "register"); await full(p, "15-register");
-  await p.fill("#n", "Test Ama"); await p.fill("#p", "0241234567"); await p.fill("#l", "Makola"); await p.click("#rb"); await p.waitForTimeout(500);
-  console.log("register rpc:", JSON.stringify((await p.evaluate(() => window.__calls)).filter(c => c[1] === "register_customer")));
-  await full(p, "16-register-saved");
-  await p.click('nav button[data-t="catalogue"]'); await p.waitForTimeout(500);
-  await metrics(p, "catalogue"); await full(p, "17-catalogue");
-  await p.click('[data-e="2"]'); await p.waitForTimeout(500); await metrics(p, "catalogue-edit"); await full(p, "18-catalogue-edit");
-  await p.click('nav button[data-t="staff"]'); await p.waitForTimeout(500);
-  await metrics(p, "staff"); await full(p, "19-staff");
-  await p.click('[data-s="s1"] .sv'); await p.waitForTimeout(400);
-  console.log("staff rpc:", JSON.stringify((await p.evaluate(() => window.__calls)).filter(c => c[1] === "admin_update_staff")));
-  await full(p, "20-staff-saved");
-  await p.click('nav button[data-t="collections"]'); await p.waitForTimeout(500);
-  allErrors.push(...t.errors); await t.ctx.close();
+  // 3. pay flow with a same-day duplicate
+  t = await open(browser, { role: "agent", onboarded: true, dup: true }); p = t.page;
+  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(700);
+  ok(await p.$(".pick") !== null, "Record payment page loads with customers (helper bug fixed)");
+  await p.click('.pick[data-id="1"]'); await p.waitForTimeout(600); await shot(p, "09-pay-dup-banner");
+  ok((await p.textContent("#dup")).includes("Already paid today"), "same-day banner shown on selecting customer");
+  await p.click("#pb"); await p.waitForTimeout(400);
+  ok((await p.textContent("#pb")).includes("Save anyway"), "first Save asks to confirm");
+  ok(!(await calls(p)).some(c => c[0] === "insert"), "nothing saved before confirmation");
+  await shot(p, "10-pay-dup-confirm");
+  await p.click("#pb"); await p.waitForTimeout(600);
+  ok((await calls(p)).some(c => c[0] === "insert" && c[1] === "payments"), "Save anyway records the payment");
+  errs.push(...t.errors); await t.ctx.close();
 
-  // 4. agent view: no staff tab, no admin buttons; error state; empty collections
-  t = await newPage(browser, { role: "agent", status: "active", emptyCollections: true });
-  console.log("agent tabs:", await t.page.$$eval("nav button", b => b.map(x => x.textContent.trim().replace(/\s+/g, " "))));
-  await full(t.page, "21-agent-collections-empty");
-  await t.page.click('nav button[data-t="catalogue"]'); await t.page.waitForTimeout(400);
-  console.log("agent sees add/edit:", await t.page.$$eval("#add, [data-e]", e => e.length));
-  await full(t.page, "22-agent-catalogue");
-  allErrors.push(...t.errors); await t.ctx.close();
+  // 4. no duplicate -> saves straight away
+  t = await open(browser, { role: "agent", onboarded: true, dup: false }); p = t.page;
+  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(600); await p.click('.pick[data-id="2"]'); await p.waitForTimeout(400);
+  ok((await p.textContent("#dup")) === "", "no banner when nothing paid today");
+  await p.click("#pb"); await p.waitForTimeout(600);
+  ok((await calls(p)).filter(c => c[0] === "insert").length === 1, "single Save works when no duplicate");
 
-  t = await newPage(browser, { role: "agent", status: "active", failTable: "purchase_ledger" });
-  await t.page.click('nav button[data-t="pay"]'); await t.page.waitForTimeout(400); await full(t.page, "23-pay-error");
-  allErrors.push(...t.errors); await t.ctx.close();
+  // 5. offline queue then sync
+  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(500);
+  await t.ctx.setOffline(true); await p.waitForTimeout(300);
+  await p.click('nav button[data-t="pay"]'); await p.waitForTimeout(700);
+  ok(await p.$(".pick") !== null, "offline: cached customer list is shown");
+  await p.click('.pick[data-id="2"]'); await p.waitForTimeout(400); await p.fill("#amt", "20"); await p.click("#pb"); await p.waitForTimeout(700);
+  await shot(p, "11-offline-queued");
+  ok((await p.textContent("body")).includes("queued on this phone"), "offline payment is queued");
+  const before = (await calls(p)).filter(c => c[0] === "insert").length;
+  await t.ctx.setOffline(false); await p.evaluate(() => window.dispatchEvent(new Event("online"))); await p.waitForTimeout(1500);
+  ok((await calls(p)).filter(c => c[0] === "insert").length === before + 1, "queued payment syncs when back online");
+  errs.push(...t.errors); await t.ctx.close();
 
-  // 5. wide screen
-  const ctx = await browser.newContext({ viewport: { width: 1100, height: 800 } });
-  await ctx.close();
+  // 6. admin
+  t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
+  ok(await p.$("#cf-tour") === null, "admin never sees the first-login tour");
+  await p.click('nav button[data-t="more"]'); await p.waitForTimeout(300); await shot(p, "12-more-admin");
+  ok((await p.$$("[data-go]")).length === 6, "admin More menu has 6 items");
+  await p.click('[data-go="financial"]'); await p.waitForTimeout(600); await shot(p, "13-financial");
+  await p.click('nav button[data-t="more"]'); await p.click('[data-go="staff"]'); await p.waitForTimeout(500);
+  errs.push(...t.errors); await t.ctx.close();
 
-  console.log("JS ERRORS:", allErrors.length ? allErrors : "none");
-  await browser.close();
+  ok(errs.length === 0, "no JavaScript errors" + (errs.length ? ": " + JSON.stringify(errs) : ""));
+  await browser.close(); server.close();
 })();

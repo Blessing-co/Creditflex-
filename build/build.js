@@ -7,8 +7,7 @@ execFileSync(path.join(dir, "node_modules/.bin/tailwindcss"),
   ["-c", "tailwind.config.js", "-i", "input.css", "-o", "out.css", "--minify"], { cwd: dir, stdio: "inherit" });
 const css = fs.readFileSync(path.join(dir, "out.css"), "utf8");
 
-const icons = ["account_balance_wallet", "block", "call", "cancel", "check_circle", "edit", "error", "grid_view", "group",
-  "hourglass_top", "image", "inventory_2", "logout", "payments", "person_add", "person_search", "search", "verified"].sort();
+const icons = ["account_balance_wallet", "block", "call", "cancel", "check_circle", "delete", "edit", "error", "grid_view", "group", "hourglass_top", "image", "info", "inventory_2", "lock", "logout", "manage_accounts", "more_horiz", "palette", "payments", "person_add", "person_search", "query_stats", "receipt_long", "school", "search", "settings", "sync", "verified"].sort();
 const url = "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0..1,0&amp;icon_names=" + icons.join(",") + "&amp;display=block";
 
 let html = fs.readFileSync(path.join(dir, "src.html"), "utf8");
