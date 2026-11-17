@@ -7,7 +7,7 @@ const root = path.join(dir, "..");
 const server = http.createServer((q, r) => {
   const f = path.join(root, q.url.split("?")[0] === "/" ? "index.html" : q.url.split("?")[0]);
   if (!f.startsWith(root) || !fs.existsSync(f)) { r.writeHead(404); return r.end(); }
-  r.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript" : "text/html" }); r.end(fs.readFileSync(f));
+  r.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript" : f.endsWith(".css") ? "text/css" : "text/html" }); r.end(fs.readFileSync(f));
 });
 
 const stub = cfg => `(function(){

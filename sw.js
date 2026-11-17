@@ -1,6 +1,6 @@
-const SHELL_CACHE="creditflex-shell-v3";
+const SHELL_CACHE="creditflex-shell-v4";
 const RUNTIME_CACHE="creditflex-runtime-v2";
-const APP_URLS=["/"];
+const APP_URLS=["/","/styles.css","/app.js","/extras.js"];
 const WARM_URLS=["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"];
 self.addEventListener("install",event=>{
  event.waitUntil((async()=>{
