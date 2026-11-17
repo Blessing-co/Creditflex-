@@ -16,3 +16,8 @@ Mobile web app for Creditflex field agents: record installment payments, registe
   This compiles Tailwind and writes the finished `../index.html`.
 - `build/test.js` runs the app in a headless browser with a fake Supabase to check the screens.
 - No `.env` file is needed. The only key in the code is Supabase's public key.
+
+
+## Database
+
+The database blueprint (tables, rules, security policies) is in the `supabase/` folder. See `supabase/README.md`.
