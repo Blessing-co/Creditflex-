@@ -214,7 +214,7 @@ function renderShell() {
   window.cfMenuClose = close; document.addEventListener("click", close);
   $("lo").onclick = logout;
   panel.querySelectorAll("button[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); window.scrollTo(0, 0); });
-  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn })[S.tab]();
+  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk })[S.tab]();
 }
 
 /* ---------- collections ---------- */
@@ -504,7 +504,7 @@ async function viewCatalogue() {
   const { data, error } = await sb.from("products").select("*").order("name");
   if (error) return v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(error.message)}</div>`;
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>
-    ${admin ? `<section class="${C.card}"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><div id="pf"></div></section>` : ""}
+    ${admin ? `<section class="${C.card}"><div class="grid grid-cols-2 gap-2"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><button class="${C.btn} !bg-secondary-container !text-on-secondary-container !shadow-none" id="addmany" type="button">${ic("photo_library", "text-[20px]")}<span>Add many</span></button></div><div id="pf"></div></section>` : ""}
     <div class="grid grid-cols-2 gap-3">${data.map(p => `<article class="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden flex flex-col">
       ${p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" class="w-full aspect-square object-cover bg-surface-container-high">` : `<div class="w-full aspect-square bg-surface-container-high text-on-surface-variant flex flex-col items-center justify-center gap-1">${ic("image", "text-[32px]")}<span class="text-label-md">No photo</span></div>`}
       <div class="p-3 flex flex-col gap-1 flex-1"><b class="text-body-lg text-on-surface leading-tight">${esc(p.name)}</b><div class="text-currency-item text-primary-container">${money(p.price)}</div>
@@ -537,6 +537,7 @@ async function viewCatalogue() {
     };
   };
   $("add").onclick = () => open(null);
+  $("addmany").onclick = () => { S.tab = "bulk"; renderShell(); window.scrollTo(0, 0); };
   v.querySelectorAll("[data-e]").forEach(b => b.onclick = () => { open(data.find(x => x.id == b.dataset.e)); window.scrollTo({ top: 0, behavior: "smooth" }); });
 }
 

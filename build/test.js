@@ -184,6 +184,38 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(/creditflex-payments-.*\.csv/.test(d.suggestedFilename()), "admin can download payments CSV");
   await p.waitForTimeout(400);
   ok((await p.textContent("#x-msg")).includes("exported"), "export reports success");
+  // bulk product upload
+  await nav(p, "catalogue"); await p.waitForTimeout(500);
+  await p.click("#addmany"); await p.waitForTimeout(500);
+  ok(await p.$("#bk-paste") !== null, "Add many page opens from the catalogue");
+  await p.fill("#bk-paste", "Blender, 300\nNasco TV 1,500\nGas cooker - GH₵ 1200\nMystery item\n\nTV stand\t85.50");
+  await p.click("#bk-paste-go"); await p.waitForTimeout(300);
+  ok((await p.$$("[data-row]")).length === 5, "pasted lines become 5 rows (blank line ignored)");
+  const prices = await p.$$eval("[data-price]", els => els.map(e => e.value));
+  ok(prices.join("|") === "300|1500|1200||85.5", "prices read from comma, dash, cedi sign and tab formats: " + prices.join("|"));
+  const chips = await p.$$eval("[data-chip]", els => els.map(e => e.textContent));
+  ok(chips[0].includes("Already exists") && chips[1] === "New product" && chips[3] === "Needs a price", "rows are checked: " + chips.join(" / "));
+  await p.setInputFiles("#bk-photos", [{ name: "gas-cooker.png", mimeType: "image/png", buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64') }, { name: "new_fridge.png", mimeType: "image/png", buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64') }]);
+  await p.waitForTimeout(800);
+  ok((await p.$$("[data-row]")).length === 6 && (await p.$$("[data-row] img")).length === 2, "photos: one matched to Gas cooker, one new row created");
+  ok((await p.$$eval("[data-name]", els => els.map(e => e.value))).includes("New Fridge"), "photo file name turned into a product name");
+  await p.setInputFiles("#bk-csv", { name: "list.csv", mimeType: "text/csv", buffer: Buffer.from("Product,Price,In stock\nOven,900,no\n\"Iron, steam\",120,yes\n") });
+  await p.waitForTimeout(400);
+  ok((await p.$$("[data-row]")).length === 8, "CSV with header adds 2 more rows");
+  await shot(p, "16-bulk");
+  await p.click("#bk-save"); await p.waitForTimeout(300);
+  ok((await p.textContent("#bk-msg")).includes("Fix the rows"), "Save is refused while a row has no price");
+  const mysteryIdx = (await p.$$eval("[data-name]", els => els.map(e => e.value))).indexOf("Mystery item");
+  await (await p.$$("[data-price]"))[mysteryIdx].fill("50");
+  await (await p.$$("[data-price]"))[5].fill("700");
+  await p.selectOption("#bk-ex", "update"); await p.waitForTimeout(200);
+  ok((await p.$$eval("[data-chip]", els => els.map(e => e.textContent))).some(t => t.includes("price will be updated")), "update mode marks existing product for update");
+  await p.click("#bk-save"); await p.waitForTimeout(1200);
+  const bcalls = await p.evaluate(() => window.__calls);
+  const ins = bcalls.filter(c => c[0] === "insert" && c[1] === "products").flatMap(c => c[2]);
+  ok(ins.length === 7 && ins.some(x => x.name === "Nasco TV" && x.price === 1500) && ins.some(x => x.name === "Oven" && x.in_stock === false) && ins.some(x => x.name === "Gas cooker" && x.image_url === "x"), "all 7 new products saved in one go with prices, stock and photo: " + ins.map(x => x.name).join(","));
+  ok(bcalls.some(c => c[0] === "update" && c[1] === "products" && c[2].price === 300), "existing Blender price updated");
+  ok((await p.textContent("#bk-msg")).includes("7 added, 1 updated"), "summary reports 7 added, 1 updated");
   errs.push(...t.errors); await t.ctx.close();
 
   ok(errs.length === 0, "no JavaScript errors" + (errs.length ? ": " + JSON.stringify(errs) : ""));
