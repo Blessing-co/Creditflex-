@@ -87,10 +87,12 @@ function renderLogin(note) {
       </form>
       <div id="authMsg">${note ? `<div class="bg-error-container text-on-error-container rounded-xl p-4 flex items-start gap-3 mt-3">${ic("error", "fill text-[22px] shrink-0")}<span class="text-label-lg flex-1">${esc(note)}</span></div>` : ""}</div>
       ${S.signup ? "" : `<div class="text-center -mt-1"><button class="${C.link}" id="fp" type="button">Forgot password?</button></div>`}
+      <div class="text-center -mt-2"><button class="${C.link}" id="lg" type="button">Privacy &amp; terms</button></div>
       <div class="text-center mt-2"><button class="${C.link}" id="swap" type="button">${S.signup ? "I already have an account" : "New staff? Sign up"}</button></div>
     </section>
   </main>`;
   $("swap").onclick = () => { S.signup = !S.signup; renderLogin(); };
+  $("lg").onclick = () => cfOpenLegal();
   if ($("fp")) $("fp").onclick = async () => {
     const email = $("em").value.trim();
     if (!email) return say("authMsg", "Type your email above first, then tap Forgot password.");
@@ -182,7 +184,7 @@ async function cfFetchAll(table, select, order) {
 }
 
 /* ---------- shell ---------- */
-const MORE_ALL = [["learn", "How it works", "school", "Plain-language guide for newcomers"], ["analytics", "Analytics", "query_stats", "Collections, trends and top agents"], ["settings", "Settings", "settings", "Theme, colours, offline payments, training"], ["account", "Account", "manage_accounts", "Your details and password"], ["credit", "Credit", "info", "Who built this and how to reach us"]];
+const MORE_ALL = [["learn", "How it works", "school", "Plain-language guide for newcomers"], ["analytics", "Analytics", "query_stats", "Collections, trends and top agents"], ["settings", "Settings", "settings", "Theme, colours, offline payments, training"], ["account", "Account", "manage_accounts", "Your details and password"], ["credit", "Credit", "info", "Who built this and how to reach us"], ["privacy", "Privacy & terms", "policy", "How we handle data and the rules of use"]];
 const MORE_ADMIN = [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"]];
 const MORE_KEYS = [...MORE_ALL, ...MORE_ADMIN].map(x => x[0]);
 const MAIN_TABS = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "Customers", "person_search"], ["catalogue", "Catalogue", "grid_view"]];
@@ -214,7 +216,7 @@ function renderShell() {
   window.cfMenuClose = close; document.addEventListener("click", close);
   $("lo").onclick = logout;
   panel.querySelectorAll("button[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); window.scrollTo(0, 0); });
-  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk })[S.tab]();
+  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk, privacy: viewCreditflexPrivacy })[S.tab]();
 }
 
 /* ---------- collections ---------- */

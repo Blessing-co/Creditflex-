@@ -16,8 +16,10 @@ Mobile web app for Creditflex field agents: record instalment payments, register
 | `app.js` | Core app: login, menu, collections, payments, customers, catalogue, staff (built copy, do not edit) |
 | `extras.js` | Guided tour, How it works, analytics, settings, credit page, offline queue (built copy, do not edit) |
 | `sw.js` | Service worker that lets the app open and save payments with no internet |
+| `legal.js` | Privacy notice and terms of use (built copy, do not edit) |
+| `manifest.webmanifest`, `icons/` | Makes the app installable on a phone's home screen (icons are drawn by `build/make-icons.js` from `build/icon.svg`) |
 | `bulk.js` | Admin tool to add many products at once (built copy, do not edit) |
-| `build/src/` | **The source files you edit**: `index.html`, `app.js`, `extras.js`, `bulk.js` |
+| `build/src/` | **The source files you edit**: `index.html`, `app.js`, `extras.js`, `bulk.js`, `legal.js` |
 | `build/` | Build tools: `build.js`, Tailwind config (`tailwind.config.js`, `input.css`), `test.js` |
 | `supabase/` | The database blueprint (SQL). See `supabase/README.md` |
 
@@ -28,7 +30,7 @@ Mobile web app for Creditflex field agents: record instalment payments, register
    ```
    cd build
    npm install        # first time only
-   node build.js      # writes index.html, styles.css, app.js, extras.js, bulk.js to the repo root
+   node build.js      # writes index.html, styles.css, app.js, extras.js, bulk.js, legal.js to the repo root
    node test.js       # runs the app in a headless browser against a fake database
    ```
 3. Commit and push. Vercel publishes it in about a minute.

@@ -7,7 +7,7 @@ const root = path.join(dir, "..");
 const server = http.createServer((q, r) => {
   const f = path.join(root, q.url.split("?")[0] === "/" ? "index.html" : q.url.split("?")[0]);
   if (!f.startsWith(root) || !fs.existsSync(f)) { r.writeHead(404); return r.end(); }
-  r.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript" : f.endsWith(".css") ? "text/css" : "text/html" }); r.end(fs.readFileSync(f));
+  r.writeHead(200, { "content-type": f.endsWith(".js") ? "text/javascript" : f.endsWith(".css") ? "text/css" : f.endsWith(".png") ? "image/png" : f.endsWith(".svg") ? "image/svg+xml" : f.endsWith(".webmanifest") ? "application/manifest+json" : "text/html" }); r.end(fs.readFileSync(f));
 });
 
 const stub = cfg => `(function(){
@@ -97,12 +97,25 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   errs.push(...t.errors); await t.ctx.close();
 
   // 2. returning agent: no tour; More menu; settings; credit
+  // sign-in screen: privacy pop-up and installable app files
+  { const lo = await open(browser, { loggedOut: true }); const lp = lo.page;
+    ok(await lp.$("#lg") !== null, "sign-in screen has a Privacy & terms link");
+    await lp.click("#lg"); await lp.waitForTimeout(300); await shot(lp, "17-legal-popup");
+    const lt = await lp.textContent("#cf-legal");
+    ok(lt.includes("Act 843") && lt.includes("Terms of use") && lt.includes("020 670 9055"), "privacy pop-up shows the notice, terms and contact");
+    await lp.click("#cf-legal-x"); ok(await lp.$("#cf-legal") === null, "privacy pop-up closes");
+    const mf = await lp.evaluate(async () => { const m = await (await fetch(document.querySelector('link[rel=manifest]').href)).json(); const ok = await Promise.all(m.icons.map(i => fetch(i.src).then(r => r.ok && r.headers.get("content-type").includes("image/png")))); return { name: m.short_name, display: m.display, icons: ok }; });
+    ok(mf.name === "Creditflex" && mf.display === "standalone" && mf.icons.length === 3 && mf.icons.every(Boolean), "manifest is valid and all 3 icons load");
+    ok(await lp.$('link[rel="apple-touch-icon"]') !== null, "iPhone home-screen icon is declared");
+    await lo.ctx.close(); }
   t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "no tour for returning agent");
   ok(await p.$("nav.fixed.bottom-0") === null, "no bottom bar any more");
   await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "03-menu-agent");
-  ok((await p.$$("#menuPanel button[data-t]")).length === 9, "agent menu has 9 pages");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 10, "agent menu has 10 pages");
   { const bx = await (await p.$("#menuPanel")).boundingBox(); ok(bx.x + bx.width > 335 && bx.y < 90, "menu sits at the top right"); }
+  await nav(p, "privacy"); await p.waitForTimeout(300);
+  ok((await p.textContent("#view")).includes("Privacy notice") && (await p.textContent("#view")).includes("Terms of use"), "Privacy & terms page opens from the menu");
   await nav(p, "learn"); await p.waitForTimeout(300); await shot(p, "03b-learn");
   ok((await p.textContent("#view")).includes("GH₵ 240") && (await p.textContent("#view")).includes("Golden rules"), "How it works page explains the business");
   await nav(p, "settings"); await p.waitForTimeout(500); await shot(p, "04-settings");
@@ -176,7 +189,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "admin never sees the first-login tour");
   await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "12-menu-admin");
-  ok((await p.$$("#menuPanel button[data-t]")).length === 12, "admin menu has 12 pages");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 13, "admin menu has 13 pages");
   await nav(p, "financial"); await p.waitForTimeout(600); await shot(p, "13-financial");
   await nav(p, 'staff'); await p.waitForTimeout(500);
   await nav(p, "export"); await p.waitForTimeout(400); await shot(p, "15-export");
