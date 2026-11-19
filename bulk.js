@@ -80,8 +80,8 @@ window.viewCreditflexBulk = async function () {
   const v = $("view");
   if (S.me.role !== "admin") { S.tab = "collections"; return renderShell(); }
   v.innerHTML = `<h1 class="${C.h1}">Add many products</h1>${loading}`;
-  const ex = await sb.from("products").select("id,name,price,in_stock,image_url").order("name");
-  if (ex.error) return v.innerHTML = `<h1 class="${C.h1}">Add many products</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(ex.error.message)}</div>`;
+  const ex = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
+  if (ex.error) return v.innerHTML = `<h1 class="${C.h1}">Add many products</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(ex.error))}</div>`;
   const existing = new Map((ex.data || []).map(p => [norm(p.name), p]));
 
   let rows = [], nextId = 1, onExisting = "skip", saving = false;
@@ -233,17 +233,17 @@ window.viewCreditflexBulk = async function () {
         if (!b.error) { chunk.forEach(r => saved.add(r.id)); result.added += chunk.length; continue; }
         for (const r of chunk) {
           const one = await sb.from("products").insert({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null });
-          if (one.error) { r.err = one.error.message; result.failed++; } else { saved.add(r.id); result.added++; }
+          if (one.error) { r.err = cfErr(one.error); result.failed++; } else { saved.add(r.id); result.added++; }
         }
       }
       /* 3. updates to products that already exist */
       for (const r of upds) {
         const e = existing.get(norm(r.name)); const patch = { price: r.price, in_stock: r.in_stock }; if (r.url) patch.image_url = r.url;
         const u = await sb.from("products").update(patch).eq("id", e.id);
-        if (u.error) { r.err = u.error.message; result.failed++; } else { saved.add(r.id); result.updated++; }
+        if (u.error) { r.err = cfErr(u.error); result.failed++; } else { saved.add(r.id); result.updated++; }
       }
       rows = rows.filter(r => !saved.has(r.id));
-      const again = await sb.from("products").select("id,name,price,in_stock,image_url");
+      const again = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
       if (!again.error) { existing.clear(); (again.data || []).forEach(p => existing.set(norm(p.name), p)); }
       const parts = []; if (result.added) parts.push(result.added + " added"); if (result.updated) parts.push(result.updated + " updated");
       let msg = (parts.join(", ") || "Nothing saved") + ".";
@@ -251,7 +251,7 @@ window.viewCreditflexBulk = async function () {
       if (result.failed) msg += " " + result.failed + " could not be saved. They stay in the list with the reason.";
       paintRows(); say("bk-msg", msg, !result.failed);
       if (!result.failed) $("bk-msg").insertAdjacentHTML("beforeend", `<button id="bk-open" type="button" class="${C.btn2} w-full mt-2">${ic("inventory_2", "text-[20px]")}<span>Open the catalogue</span></button>`), $("bk-open").onclick = () => { S.tab = "catalogue"; renderShell(); };
-    } catch (err) { say("bk-msg", err.message || "Saving failed. Nothing more was saved; check the list and try again."); }
+    } catch (err) { say("bk-msg", cfErr(err) || "Saving failed. Check the list and try again."); }
     saving = false; busy(btn, false); paintChips();
   };
 

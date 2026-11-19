@@ -15,6 +15,7 @@ Mobile web app for Creditflex field agents: record instalment payments, register
 | `styles.css` | All the styling (built file, do not edit) |
 | `app.js` | Core app: login, menu, collections, payments, customers, catalogue, staff (built copy, do not edit) |
 | `extras.js` | Guided tour, How it works, analytics, settings, credit page, offline queue (built copy, do not edit) |
+| `vendor/supabase.js` | The Supabase library, served from this repo with an exact pinned version (set in `build/package.json`) instead of a public CDN. `node build.js` copies it here. |
 | `sw.js` | Service worker that lets the app open and save payments with no internet |
 | `legal.js` | Privacy notice and terms of use (built copy, do not edit) |
 | `manifest.webmanifest`, `icons/` | Makes the app installable on a phone's home screen (icons are drawn by `build/make-icons.js` from `build/icon.svg`) |

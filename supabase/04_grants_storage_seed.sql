@@ -1,6 +1,12 @@
 -- Creditflex Agents: who may call which function, photo storage, starter data.
 -- Run after 03_policies.sql.
 
+-- ===== signed-out visitors (anon) get no direct table access =====
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+
 -- ===== function permissions =====
 grant usage on schema private to authenticated;
 revoke execute on all functions in schema private from public, anon;

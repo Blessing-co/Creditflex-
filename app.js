@@ -2,7 +2,52 @@ const SUPABASE_URL = "https://dsjuwmtojudcaulfqmyp.supabase.co";
 const SUPABASE_KEY = "sb_publishable_pSzeeh2eHthcVfL7ZQzZug_xmdN9t2a";
 const RECOVERY = /type=recovery/.test(location.hash);
 const HASHERR = ((location.hash.match(/error_description=([^&]+)/) || [])[1] || "").replace(/\+/g, " ");
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "implicit" } });
+/* Network layer: every request gets a time limit; reads are retried a couple of times.
+   Writes are never retried here (a payment that timed out is queued and re-sent safely
+   with its offline_submission_id by the offline queue). */
+const CF_NET = { read: 20000, write: 45000, upload: 90000, retries: 2, backoff: 400 };
+const cfSleep = ms => new Promise(r => setTimeout(r, ms));
+async function cfFetch(url, opts) {
+  opts = opts || {};
+  const method = String(opts.method || "GET").toUpperCase(), isRead = method === "GET" || method === "HEAD";
+  if (typeof navigator !== "undefined" && navigator.onLine === false) throw new TypeError("Failed to fetch (offline)");
+  const limit = isRead ? CF_NET.read : (String(url).includes("/storage/v1/") ? CF_NET.upload : CF_NET.write);
+  const tries = isRead ? CF_NET.retries + 1 : 1;
+  let last;
+  for (let i = 0; i < tries; i++) {
+    const ctl = new AbortController(); let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, limit);
+    const outer = opts.signal, fwd = () => ctl.abort();
+    if (outer) { if (outer.aborted) ctl.abort(); else outer.addEventListener("abort", fwd, { once: true }); }
+    try {
+      const res = await fetch(url, { ...opts, signal: ctl.signal });
+      clearTimeout(timer);
+      if (isRead && res.status >= 500 && i < tries - 1) { await cfSleep(CF_NET.backoff * 2 ** i); continue; }
+      return res;
+    } catch (e) {
+      clearTimeout(timer);
+      if (outer && outer.aborted) throw e;
+      last = timedOut ? new TypeError("Failed to fetch: the server took too long (timeout)") : e;
+      if (isRead && i < tries - 1) { await cfSleep(CF_NET.backoff * 2 ** i); continue; }
+    } finally { if (outer) outer.removeEventListener("abort", fwd); }
+  }
+  throw last;
+}
+/* Turn any error into a short message a customer-facing agent can understand. */
+function cfErr(e) {
+  if (!e) return "";
+  const m = String(e.message || e), c = String(e.code || ""), n = String(e.name || "");
+  if (/failed to fetch|networkerror|network request failed|load failed|timeout|offline/i.test(m)) return "Cannot reach the server. Check your internet and try again.";
+  if (/jwt|token.*expired|not authenticated/i.test(m)) return "Your session has expired. Please sign out and sign in again.";
+  if (c === "P0001" || /^(Auth|Storage)/.test(n)) return m;
+  if (c === "42501" || /row-level security|permission denied/i.test(m)) return "You do not have permission to do that.";
+  if (c === "23505") return "That already exists.";
+  if (c === "23503") return "That item is linked to other records or no longer exists.";
+  if (["23514", "23502", "22P02", "22003", "22007"].includes(c)) return "One of the values is not allowed. Check it and try again.";
+  console.warn("Unexpected error", e);
+  return "Something went wrong. Please try again, and call us if it keeps happening.";
+}
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "implicit" }, global: { fetch: cfFetch } });
 
 const $app = document.getElementById("app");
 const S = { me: null, tab: "collections", signup: false, selPurchase: null, recovery: RECOVERY };
@@ -57,7 +102,7 @@ async function boot() {
 async function loadMe() {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return renderLogin();
-  const { data, error } = await sb.from("staff").select("*").eq("id", user.id).maybeSingle();
+  const { data, error } = await sb.from("staff").select("id,full_name,email,phone,role,status,supervisor_id,onboarding_completed_at").eq("id", user.id).maybeSingle();
   if (error || !data) { await sb.auth.signOut(); return renderLogin("Could not load your staff account."); }
   S.me = data;
   if (data.status !== "active") return renderBlocked();
@@ -172,15 +217,24 @@ function cfCsvDownload(name, rows) {
   const url = URL.createObjectURL(new Blob(["\ufeff" + body], { type: "text/csv;charset=utf-8;" }));
   const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-async function cfFetchAll(table, select, order) {
-  let all = [], from = 0;
+/* Reads EVERY row, 1000 at a time (Supabase silently stops at 1000 per request). */
+async function cfFetchAll(table, select, order, filter) {
+  const orders = [].concat(order); let all = [], from = 0;
   for (;;) {
-    const { data, error } = await sb.from(table).select(select).order(order, { ascending: true }).range(from, from + 999);
+    let q = sb.from(table).select(select);
+    if (filter) q = filter(q);
+    orders.forEach(o => { q = q.order(o, { ascending: true }); });
+    const { data, error } = await q.range(from, from + 999);
     if (error) throw error;
     all = all.concat(data || []);
     if (!data || data.length < 1000) return all;
     from += 1000;
   }
+}
+/* Same, but returns { data, error } like a normal query and never throws. */
+async function cfLoadAll(table, select, order, filter) {
+  try { return { data: await cfFetchAll(table, select, order, filter), error: null }; }
+  catch (error) { return { data: null, error }; }
 }
 
 /* ---------- shell ---------- */
@@ -236,7 +290,7 @@ async function viewCollections() {
     const f = $("df").value, t = $("dt").value;
     $("out").innerHTML = loading;
     const { data, error } = await sb.rpc("collection_summary", { p_from: f, p_to: t });
-    if (error) { $("out").innerHTML = ""; return say("cm", error.message); }
+    if (error) { $("out").innerHTML = ""; return say("cm", cfErr(error)); }
     exportRows=data||[];
     say("cm", "");
     const total = data.reduce((a, r) => a + Number(r.total), 0), cnt = data.reduce((a, r) => a + r.payments_count, 0);
@@ -296,15 +350,15 @@ async function viewPay() {
     <section id="list" class="space-y-2">${loading}</section><div id="form"></div>`;
   let data=[], cfRecent=[];
   if(navigator.onLine){
-    const result=await sb.from("purchase_ledger").select("*").eq("status","active").order("customer_name");
+    const result=await cfLoadAll("purchase_ledger","purchase_id,customer_id,customer_name,customer_phone,product_id,product_name,plan_name,total_price,installment_amount,amount_paid,balance,payments_made,status",["customer_name","purchase_id"],q=>q.eq("status","active"));
     if(!result.error){data=result.data||[];try{await cfCacheLedger(data);}catch(e){console.warn("Could not cache purchase list",e);}}
     else {const cached=await cfCachedLedger().catch(()=>null);if(cached&&Array.isArray(cached.rows)){data=cached.rows.filter(x=>x.status==="active");say("top","Live data could not be reached. Showing the last saved customer list from this device.",false);}else return $("list").innerHTML='<div class="bg-error-container rounded-xl p-4">Could not load purchases. Connect to the internet and try again.</div>';}
     try{
       const since=new Date(new Date().setHours(0,0,0,0)).toISOString();
-      const [hist,pays]=await Promise.all([
-        sb.from("purchase_ledger").select("purchase_id,customer_id,product_id"),
-        sb.from("payments").select("purchase_id,created_at").eq("collected_by",S.me.id).gte("created_at",since).is("voided_at",null)
-      ]);
+      const paysRes=await sb.from("payments").select("purchase_id,created_at").eq("collected_by",S.me.id).gte("created_at",since).is("voided_at",null);
+      const ids=[...new Set((paysRes.data||[]).map(p=>p.purchase_id))];let histRows=[],histErr=null;
+      for(let i=0;i<ids.length&&!histErr;i+=80){const h=await sb.from("purchase_ledger").select("purchase_id,customer_id,product_id").in("purchase_id",ids.slice(i,i+80));if(h.error)histErr=h.error;else histRows=histRows.concat(h.data||[]);}
+      const hist={data:histRows,error:histErr},pays=paysRes;
       if(!hist.error&&!pays.error){const map=new Map((hist.data||[]).map(x=>[String(x.purchase_id),x]));cfRecent=(pays.data||[]).map(p=>({...map.get(String(p.purchase_id)),created_at:p.created_at})).filter(x=>x.customer_id&&x.product_id);await cfCacheRecent(cfRecent);}
       else {const cached=await cfCachedRecent().catch(()=>null);cfRecent=cached?.rows||[];}
     }catch(e){const cached=await cfCachedRecent().catch(()=>null);cfRecent=cached?.rows||[];}
@@ -381,7 +435,7 @@ async function viewPay() {
         return;
       }
       const duplicateCheck=await sb.rpc("check_recent_payment_duplicate",{p_customer_id:r.customer_id,p_product_id:r.product_id});
-      if(duplicateCheck.error){busy(b,false);return say("pm",duplicateCheck.error.message||"Could not verify recent payment history. Try again.");}
+      if(duplicateCheck.error){busy(b,false);return say("pm",cfErr(duplicateCheck.error));}
       if(duplicateCheck.data&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
       const offlineId = crypto.randomUUID();
       let { error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId });
@@ -400,7 +454,7 @@ async function viewPay() {
             return;
           }
         }
-        return say("pm", error.message);
+        return say("pm", cfErr(error));
       }
       const who = r.customer_name;
       S.selPurchase = null; await viewPay();
@@ -426,8 +480,8 @@ async function cfRegisterForm() {
   const v = $("cbody");
   v.innerHTML = `<h1 class="${C.h1}">New customer</h1>${loading}`;
   const [{ data: prods }, { data: plans }] = await Promise.all([
-    sb.from("products").select("*").eq("in_stock", true).order("name"),
-    sb.from("payment_plans").select("*").order("id")
+    sb.from("products").select("id,name,price").eq("in_stock", true).order("name"),
+    sb.from("payment_plans").select("id,name,frequency,installments").order("id")
   ]);
   if (!prods || !prods.length) return v.innerHTML = `<h1 class="${C.h1}">New customer</h1><div class="bg-surface-container-low rounded-xl p-5 text-center"><div class="w-12 h-12 mx-auto rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center">${ic("inventory_2", "text-[26px]")}</div><p class="${C.mute} mt-2">No products are in stock yet. An admin needs to add products in the Catalogue tab first.</p></div>`;
   v.innerHTML = `<h1 class="${C.h1}">Register a new customer</h1>
@@ -449,7 +503,7 @@ async function cfRegisterForm() {
     e.preventDefault(); const b = $("rb"); busy(b, true);
     const { error } = await sb.rpc("register_customer", { p_full_name: $("n").value, p_phone: $("p").value, p_location: $("l").value, p_product_id: Number($("pr").value), p_plan_id: Number($("pl").value) });
     busy(b, false);
-    if (error) return say("rm", error.message);
+    if (error) return say("rm", cfErr(error));
     $("rf").reset(); preview(); say("rm", "Customer registered. You can now record their payments.", true);
   };
 }
@@ -460,8 +514,8 @@ async function cfStatements() {
   const v = $("cbody");
   if (!navigator.onLine) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">Customer statements need an internet connection. Reconnect and try again.</div>`;
   v.innerHTML = loading;
-  const { data, error } = await sb.from("customers").select("id,full_name,phone,location").order("full_name").limit(1000);
-  if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(error.message)}</div>`;
+  const { data, error } = await cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]);
+  if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const all = data || [];
   v.innerHTML = `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
     <input id="sq" type="search" autocomplete="off" class="${C.inp}" placeholder="Type a name or phone"></section>
@@ -476,13 +530,13 @@ async function cfStatements() {
 }
 async function cfStatement(c) {
   const box = $("sbox"); box.innerHTML = loading; box.scrollIntoView({ behavior: "smooth", block: "start" });
-  const led = await sb.from("purchase_ledger").select("*").eq("customer_id", c.id).order("created_at", { ascending: false });
-  if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(led.error.message)}</div>`;
+  const led = await sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", c.id).order("created_at", { ascending: false });
+  if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(led.error))}</div>`;
   const purchases = led.data || [], ids = purchases.map(x => x.purchase_id);
   let pays = [];
   if (ids.length) {
     const r = await sb.from("payments").select("id,purchase_id,amount,paid_on,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true });
-    if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(r.error.message)}</div>`;
+    if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(r.error))}</div>`;
     pays = r.data || [];
   }
   const tot = purchases.reduce((a, x) => a + Number(x.total_price), 0), paid = purchases.reduce((a, x) => a + Number(x.amount_paid), 0), bal = purchases.reduce((a, x) => a + Number(x.balance), 0);
@@ -503,8 +557,8 @@ async function cfStatement(c) {
 async function viewCatalogue() {
   const v = $("view"), admin = S.me.role === "admin";
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>${loading}`;
-  const { data, error } = await sb.from("products").select("*").order("name");
-  if (error) return v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(error.message)}</div>`;
+  const { data, error } = await cfLoadAll("products", "id,name,price,image_url,in_stock", ["name", "id"]);
+  if (error) return v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>
     ${admin ? `<section class="${C.card}"><div class="grid grid-cols-2 gap-2"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><button class="${C.btn} !bg-secondary-container !text-on-secondary-container !shadow-none" id="addmany" type="button">${ic("photo_library", "text-[20px]")}<span>Add many</span></button></div><div id="pf"></div></section>` : ""}
     <div class="grid grid-cols-2 gap-3">${data.map(p => `<article class="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden flex flex-col">
@@ -528,13 +582,13 @@ async function viewCatalogue() {
         if (file.size > 2097152) { busy(b, false); return say("fm", "Photo is bigger than 2 MB."); }
         const path = `${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, "_")}`;
         const up = await sb.storage.from("product-images").upload(path, file, { contentType: file.type });
-        if (up.error) { busy(b, false); return say("fm", up.error.message); }
+        if (up.error) { busy(b, false); return say("fm", cfErr(up.error)); }
         image_url = sb.storage.from("product-images").getPublicUrl(path).data.publicUrl;
       }
       const row = { name: $("pn").value.trim(), price: Number($("pp").value), in_stock: $("ps").checked, image_url };
       const { error } = p ? await sb.from("products").update(row).eq("id", p.id) : await sb.from("products").insert(row);
       busy(b, false);
-      if (error) return say("fm", error.message);
+      if (error) return say("fm", cfErr(error));
       viewCatalogue();
     };
   };
@@ -547,8 +601,8 @@ async function viewCatalogue() {
 async function viewStaff() {
   const v = $("view");
   v.innerHTML = `<h1 class="${C.h1}">Staff</h1>${loading}`;
-  const { data: raw, error } = await sb.from("staff").select("*").order("status").order("full_name");
-  if (error) return v.innerHTML = `<h1 class="${C.h1}">Staff</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(error.message)}</div>`;
+  const { data: raw, error } = await cfLoadAll("staff", "id,full_name,email,phone,role,status,supervisor_id,created_at", ["status","full_name","id"]);
+  if (error) return v.innerHTML = `<h1 class="${C.h1}">Staff</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const rank = { pending: 0, active: 1, disabled: 2 };
   const data = [...raw].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
   const pending = data.filter(s => s.status === "pending").length;
@@ -570,7 +624,7 @@ async function viewStaff() {
     el.querySelector(".st").value = s.status; el.querySelector(".ro").value = s.role; el.querySelector(".su").value = s.supervisor_id || "";
     el.querySelector(".sv").onclick = async () => {
       const { error } = await sb.rpc("admin_update_staff", { p_staff_id: s.id, p_status: el.querySelector(".st").value, p_role: el.querySelector(".ro").value, p_supervisor_id: el.querySelector(".su").value || null });
-      say("sm", error ? error.message : `${s.full_name} updated.`, !error);
+      say("sm", error ? cfErr(error) : `${s.full_name} updated.`, !error);
       if (!error) window.scrollTo({ top: 0, behavior: "smooth" });
     };
   });

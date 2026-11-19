@@ -45,12 +45,13 @@ const stub = cfg => `(function(){
 async function open(browser, cfg, ctxOpts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, serviceWorkers: "block", ...ctxOpts });
   const page = await ctx.newPage(); const errors = [];
-  page.on("pageerror", e => errors.push("pageerror: " + e.message));
+  page.on("pageerror", e => { errors.push("pageerror: " + e.message); if (process.env.DBG) console.log("PAGEERR", e.message); });
+  page.on("console", m => { if (process.env.DBG && m.type() === "error") console.log("CONSOLE", m.text()); });
   page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|net::ERR/.test(m.text())) errors.push("console: " + m.text()); });
   await page.route("**/*", route => {
     const u = route.request().url();
+    if (u.includes("/vendor/supabase.js")) return route.fulfill({ contentType: "application/javascript", body: stub(cfg) });
     if (u.startsWith("http://localhost")) return route.continue();
-    if (u.includes("@supabase/supabase-js")) return route.fulfill({ contentType: "application/javascript", body: stub(cfg) });
     return route.abort();
   });
   await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
@@ -97,6 +98,32 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   errs.push(...t.errors); await t.ctx.close();
 
   // 2. returning agent: no tour; More menu; settings; credit
+  // network layer, paging and friendly errors
+  { const nt = await open(browser, { loggedOut: true }); const np = nt.page;
+    const r = await np.evaluate(async () => {
+      const out = {}; const realFetch = window.fetch; CF_NET.backoff = 1;
+      let n = 0; window.fetch = async () => { n++; if (n < 3) throw new TypeError("Failed to fetch"); return new Response("ok", { status: 200 }); };
+      out.getRes = (await (await cfFetch("https://x.test/a")).text()); out.getCalls = n;
+      n = 0; window.fetch = async () => { n++; throw new TypeError("Failed to fetch"); };
+      try { await cfFetch("https://x.test/a", { method: "POST" }); out.postErr = "none"; } catch (e) { out.postErr = e.message; } out.postCalls = n;
+      n = 0; window.fetch = async () => { n++; return new Response("bad", { status: 503 }); };
+      out.r503 = (await cfFetch("https://x.test/a")).status; out.r503Calls = n;
+      const keep = CF_NET.read, keepR = CF_NET.retries; CF_NET.read = 40; CF_NET.retries = 0;
+      window.fetch = (u, o) => new Promise((_, rej) => o.signal.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))));
+      try { await cfFetch("https://x.test/slow"); out.slow = "none"; } catch (e) { out.slow = e.message; }
+      CF_NET.read = keep; CF_NET.retries = keepR; window.fetch = realFetch;
+      out.errs = [cfErr({ message: "Failed to fetch" }), cfErr({ code: "P0001", message: "Payment is more than the balance (balance is 10.00)." }), cfErr({ code: "42501", message: "permission denied for table x" }), cfErr({ code: "XX000", message: "relation public.secret_table does not exist" }), cfErr({ name: "AuthApiError", message: "Invalid login credentials" })];
+      const pages = []; const fake = { select() { return fake; }, order() { return fake; }, range(a, b) { pages.push([a, b]); const n = Math.max(0, Math.min(b + 1, 2350) - a); return Promise.resolve({ data: Array.from({ length: n }, (_, i) => ({ id: a + i })), error: null }); } };
+      const keepFrom = sb.from; sb.from = () => fake; const all = await cfFetchAll("x", "id", ["id"]); sb.from = keepFrom;
+      out.paged = [all.length, pages.length];
+      return out; });
+    ok(r.getRes === "ok" && r.getCalls === 3, "a failed read is retried and then succeeds (" + r.getCalls + " tries)");
+    ok(r.postCalls === 1 && /Failed to fetch/.test(r.postErr), "a failed write is never retried");
+    ok(r.r503 === 503 && r.r503Calls === 3, "server errors on reads are retried then returned");
+    ok(/timeout/.test(r.slow), "a hanging request times out: " + r.slow);
+    ok(r.errs[0].startsWith("Cannot reach the server") && r.errs[1].includes("more than the balance") && r.errs[2] === "You do not have permission to do that." && r.errs[3].startsWith("Something went wrong") && r.errs[3].indexOf("secret_table") < 0 && r.errs[4] === "Invalid login credentials", "error messages are friendly and hide database details");
+    ok(r.paged[0] === 2350 && r.paged[1] === 3, "paging reads all 2350 rows in 3 requests, not just 1000: " + r.paged);
+    await nt.ctx.close(); }
   // sign-in screen: privacy pop-up and installable app files
   { const lo = await open(browser, { loggedOut: true }); const lp = lo.page;
     ok(await lp.$("#lg") !== null, "sign-in screen has a Privacy & terms link");

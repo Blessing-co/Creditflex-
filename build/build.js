@@ -28,4 +28,7 @@ const outDir = process.argv[2] || path.join(dir, "..");
 fs.writeFileSync(path.join(outDir, "index.html"), html);
 fs.writeFileSync(path.join(outDir, "styles.css"), css);
 for (const [f, text] of js) fs.writeFileSync(path.join(outDir, f), text);
+// the Supabase library is served from this repo (exact version pinned in package.json), not from a public CDN
+fs.mkdirSync(path.join(outDir, "vendor"), { recursive: true });
+fs.copyFileSync(path.join(dir, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"), path.join(outDir, "vendor", "supabase.js"));
 console.log("html", html.length, "css", css.length, "js", js.map(x => x[0] + " " + x[1].length).join(", "), "icons", icons.length, "->", outDir);
