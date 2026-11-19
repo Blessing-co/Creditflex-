@@ -453,9 +453,9 @@ async function viewPay() {
       if(duplicateCheck.error){busy(b,false);return say("pm",cfErr(duplicateCheck.error));}
       if(duplicateCheck.data&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
       const offlineId = cfUuid();
-      let { error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId });
+      let { data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId }).select("id").maybeSingle();
       if (error && /offline_submission_id|column/i.test(error.message || "")) {
-        ({ error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }));
+        ({ data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }).select("id").maybeSingle());
       }
       busy(b, false);
       if (error) {
@@ -474,6 +474,7 @@ async function viewPay() {
       const who = r.customer_name;
       S.selPurchase = null; await viewPay();
       say("top", `Payment of ${money(amount)} from ${who} saved.`, true); cfBuzz();
+      if (saved && saved.id) cfSmsButton(saved.id, who);
     };
   };
   $("q").oninput = draw;
@@ -540,6 +541,22 @@ function cfRunning(pays, priceOf) {
     out.set(p.id, { paid: paid[k], balance: Math.round((price - paid[k]) * 100) / 100 });
   });
   return out;
+}
+
+/* ---------- SMS receipt (sent by a server function; the SMS key never reaches the phone) ---------- */
+function cfSmsButton(paymentId, who) {
+  const top = $("top"); if (!top) return;
+  top.insertAdjacentHTML("beforeend", `<button id="sms-btn" type="button" class="${C.btn2} w-full mt-2">${ic("call", "text-[20px]")}<span>Send SMS receipt to ${esc(who)}</span></button><div id="sms-msg" class="mt-1"></div>`);
+  $("sms-btn").onclick = async () => {
+    const b = $("sms-btn"); busy(b, true);
+    let res;
+    try { const r = await sb.functions.invoke("send-payment-sms", { body: { payment_id: paymentId } }); res = r.data; if (r.error) { try { res = await r.error.context.json(); } catch (e) { res = { ok: false, message: cfErr(r.error) }; } } }
+    catch (e) { res = { ok: false, message: cfErr(e) }; }
+    busy(b, false);
+    const ok = res && res.ok;
+    $("sms-msg").innerHTML = `<p class="text-label-md ${ok ? "text-primary" : "text-error"}">${esc((res && res.message) || "Could not send the SMS.")}</p>`;
+    if (ok) b.remove();
+  };
 }
 
 /* ---------- customer statement ---------- */

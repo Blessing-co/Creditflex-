@@ -30,14 +30,15 @@ const stub = cfg => `(function(){
   function builder(t){const b={_single:false};
     ['select','eq','order','limit','gte','lte','is','in','range'].forEach(m=>b[m]=()=>b);
     b.maybeSingle=()=>{b._single=true;return b;};
-    b.insert=row=>{calls.push(['insert',t,row]);return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
-    b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:null);
+    b.insert=row=>{calls.push(['insert',t,row]);b._ins=true;return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
+    b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:(b._ins&&t==='payments'?{id:99}:null));
       return Promise.resolve({data,error:null}).then(res,rej);};
     return b;}
   const sbm={auth:{getSession:async()=>({data:{session:cfg.loggedOut?null:{}}}),getUser:async()=>({data:{user:{id:'u1'}}}),
     signOut:async()=>({}),signInWithPassword:async()=>({error:{message:'Invalid login credentials'}}),signUp:async()=>({error:null}),
     resetPasswordForEmail:async()=>({error:null}),updateUser:async()=>({error:null}),onAuthStateChange:()=>{}},
     from:t=>builder(t), rpc:async(n,a)=>{calls.push(['rpc',n,a]);return{data:RPC[n]??null,error:null};},
+    functions:{invoke:async(n,o)=>{calls.push(['fn',n,o.body]);return{data:{ok:true,message:'SMS sent.'},error:null};}},
     storage:{from:()=>({upload:async()=>({error:null}),getPublicUrl:()=>({data:{publicUrl:'x'}})})}};
   window.supabase={createClient:()=>sbm};
 })();`;
@@ -205,6 +206,9 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok((await p.textContent("#dup")) === "", "no banner when nothing paid today");
   await p.click("#pb"); await p.waitForTimeout(600);
   ok((await calls(p)).filter(c => c[0] === "insert").length === 1, "single Save works when no duplicate");
+  ok(await p.$("#sms-btn") !== null, "SMS receipt button appears after a saved payment");
+  await p.click("#sms-btn"); await p.waitForTimeout(400);
+  ok((await calls(p)).some(c => c[0] === "fn" && c[1] === "send-payment-sms"), "SMS button calls the server function");
 
   // 5. offline queue then sync
   await nav(p, 'pay'); await p.waitForTimeout(500);

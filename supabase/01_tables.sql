@@ -167,3 +167,15 @@ create or replace view public.purchase_ledger with (security_invoker=true) as
 -- offline registration: lets the app send the same customer twice safely
 alter table public.customers add column if not exists client_submission_id uuid;
 create unique index if not exists customers_client_submission_id_uidx on public.customers (client_submission_id) where client_submission_id is not null;
+
+-- SMS receipts log (written only by the send-payment-sms edge function)
+create table if not exists public.sms_log (
+  id bigint generated always as identity primary key,
+  payment_id bigint not null references public.payments(id) on delete restrict,
+  sent_by uuid not null references public.staff(id),
+  phone text, message text,
+  status text not null check (status in ('sent','failed')),
+  provider_response text,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists sms_log_one_sent_per_payment on public.sms_log (payment_id) where status = 'sent';

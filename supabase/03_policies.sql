@@ -67,3 +67,10 @@ create policy staff_select on public.staff as permissive for select to authentic
   using ((id = (select auth.uid())) or private.is_admin() or ((supervisor_id = (select auth.uid())) and private.is_active_staff()));
 create policy staff_update on public.staff as permissive for update to authenticated
   using (private.is_admin()) with check (private.is_admin());
+
+-- sms_log: staff read their own sends, admin reads all; only the edge function writes
+alter table public.sms_log enable row level security;
+revoke all on public.sms_log from anon, authenticated;
+grant select on public.sms_log to authenticated;
+create policy sms_log_select on public.sms_log for select to authenticated
+  using (sent_by = (select auth.uid()) or (select private.is_admin()));
