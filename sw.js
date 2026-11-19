@@ -22,16 +22,14 @@ self.addEventListener("fetch",event=>{
  const sameOrigin=url.origin===self.location.origin;
  const cacheableExternal=["cdn.jsdelivr.net","fonts.googleapis.com","fonts.gstatic.com"].includes(url.hostname);
  if(!sameOrigin&&!cacheableExternal)return;
+ // Stale-while-revalidate: show the saved copy at once (fast on weak internet), refresh it quietly in the background.
  event.respondWith((async()=>{
   const cache=await caches.open(sameOrigin?SHELL_CACHE:RUNTIME_CACHE);
-  try{
-   const response=await fetch(event.request);
-   if(response&&response.ok)cache.put(event.request,response.clone()).catch(()=>{});
-   return response;
-  }catch(error){
-   const cached=await cache.match(event.request);
-   if(cached)return cached;
-   if(sameOrigin&&event.request.mode==="navigate")return (await caches.open(SHELL_CACHE)).match("/");
+  const cached=await cache.match(event.request,{ignoreSearch:sameOrigin});
+  const refresh=fetch(event.request).then(r=>{if(r&&(r.ok||r.type==="opaque"))cache.put(event.request,r.clone()).catch(()=>{});return r;});
+  if(cached){refresh.catch(()=>{});return cached;}
+  try{return await refresh;}catch(error){
+   if(sameOrigin&&event.request.mode==="navigate"){const home=await cache.match("/");if(home)return home;}
    throw error;
   }
  })());

@@ -57,7 +57,13 @@ async function open(browser, cfg, ctxOpts = {}) {
   await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
   return { page, ctx, errors };
 }
-const nav = async (p, k) => { if (await p.$eval('#menuPanel', e => e.classList.contains('hidden'))) await p.click('#menuBtn'); await p.click('#menuPanel button[data-t="' + k + '"]'); };
+const HUBP = { learn: "help", privacy: "help", credit: "help", staff: "manage", financial: "manage", export: "manage", bulk: "manage" };
+const nav = async (p, k) => {
+  const top = async key => { if (await p.$eval('#menuPanel', e => e.classList.contains('hidden'))) await p.click('#menuBtn'); await p.click('#menuPanel button[data-t="' + key + '"]'); };
+  if (HUBP[k]) { await top(HUBP[k]); await p.waitForSelector('[data-go="' + k + '"]'); await p.click('[data-go="' + k + '"]'); }
+  else if (k === "account") { await top("settings"); await p.waitForSelector('#cf-acct'); await p.click('#cf-acct'); }
+  else await top(k);
+};
 const shot = (p, n) => p.screenshot({ path: path.join(shots, n + ".png"), fullPage: false });
 const calls = p => p.evaluate(() => window.__calls);
 const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process.exitCode = 1; };
@@ -139,7 +145,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(await p.$("#cf-tour") === null, "no tour for returning agent");
   ok(await p.$("nav.fixed.bottom-0") === null, "no bottom bar any more");
   await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "03-menu-agent");
-  ok((await p.$$("#menuPanel button[data-t]")).length === 10, "agent menu has 10 pages");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 7, "agent menu has 7 tabs");
   { const bx = await (await p.$("#menuPanel")).boundingBox(); ok(bx.x + bx.width > 335 && bx.y < 90, "menu sits at the top right"); }
   await nav(p, "privacy"); await p.waitForTimeout(300);
   ok((await p.textContent("#view")).includes("Privacy notice") && (await p.textContent("#view")).includes("Terms of use"), "Privacy & terms page opens from the menu");
@@ -183,6 +189,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   await nav(p, 'pay'); await p.waitForTimeout(700);
   ok(await p.$(".pick") !== null, "Record payment page loads with customers (helper bug fixed)");
   await p.click('.pick[data-id="1"]'); await p.waitForTimeout(600); await shot(p, "09-pay-dup-banner");
+  ok((await p.$("#pd")) === null, "agent has no payment date field");
   ok((await p.textContent("#dup")).includes("Already paid today"), "same-day banner shown on selecting customer");
   await p.click("#pb"); await p.waitForTimeout(400);
   ok((await p.textContent("#pb")).includes("Save anyway"), "first Save asks to confirm");
@@ -210,13 +217,29 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   const before = (await calls(p)).filter(c => c[0] === "insert").length;
   await t.ctx.setOffline(false); await p.evaluate(() => window.dispatchEvent(new Event("online"))); await p.waitForTimeout(1500);
   ok((await calls(p)).filter(c => c[0] === "insert").length === before + 1, "queued payment syncs when back online");
+
+  // 5b. offline reading and offline customer sign-up
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  await nav(p, "register"); await p.waitForSelector("[data-c]");
+  await nav(p, "catalogue"); await p.waitForTimeout(500);
+  await t.ctx.setOffline(true); await p.waitForTimeout(300);
+  await nav(p, "register"); await p.waitForTimeout(700);
+  ok((await p.$$("[data-c]")).length > 0 && (await p.textContent("body")).includes("Saved copy"), "offline: customers shown from the saved copy");
+  await p.click('[data-cm="new"]'); await p.waitForSelector("#rf"); await p.fill("#n", "Offline Ama"); await p.fill("#p", "0244000111"); await p.click("#rb"); await p.waitForTimeout(700);
+  ok((await p.textContent("body")).includes("saved on this phone"), "offline: new customer is queued");
+  const rb = (await calls(p)).filter(c => c[0] === "rpc" && c[1] === "register_customer").length;
+  await t.ctx.setOffline(false); await p.evaluate(() => window.dispatchEvent(new Event("online"))); await p.waitForTimeout(1500);
+  const rc = (await calls(p)).filter(c => c[0] === "rpc" && c[1] === "register_customer");
+  ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
   // 6. admin
   t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "admin never sees the first-login tour");
   await p.click("#menuBtn"); await p.waitForTimeout(200); await shot(p, "12-menu-admin");
-  ok((await p.$$("#menuPanel button[data-t]")).length === 13, "admin menu has 13 pages");
+  ok((await p.$$("#menuPanel button[data-t]")).length === 8, "admin menu has 8 tabs");
+  await nav(p, "pay"); await p.waitForSelector(".pick"); await p.click(".pick"); await p.waitForSelector("#pd");
+  ok(true, "admin still has the payment date field");
   await nav(p, "financial"); await p.waitForTimeout(600); await shot(p, "13-financial");
   await nav(p, 'staff'); await p.waitForTimeout(500);
   await nav(p, "export"); await p.waitForTimeout(400); await shot(p, "15-export");

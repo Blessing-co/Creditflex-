@@ -163,3 +163,7 @@ create or replace view public.purchase_ledger with (security_invoker=true) as
      JOIN staff s ON ((s.id = p.agent_id)))
      LEFT JOIN payments pay ON ((pay.purchase_id = p.id)))
   GROUP BY p.id, c.id, pr.id, pp.id, s.id;
+
+-- offline registration: lets the app send the same customer twice safely
+alter table public.customers add column if not exists client_submission_id uuid;
+create unique index if not exists customers_client_submission_id_uidx on public.customers (client_submission_id) where client_submission_id is not null;

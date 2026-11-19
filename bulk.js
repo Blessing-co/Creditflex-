@@ -65,11 +65,11 @@ async function preparePhoto(file) {
   if (file.size <= 400000) return file;
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) { bmp = await createImageBitmap(file); }
-  const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, 800 / Math.max(bmp.width, bmp.height));
   const cv = document.createElement("canvas"); cv.width = Math.round(bmp.width * scale); cv.height = Math.round(bmp.height * scale);
   const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
   if (bmp.close) bmp.close();
-  for (const quality of [0.82, 0.65, 0.5]) {
+  for (const quality of [0.75, 0.6, 0.5]) {
     const blob = await new Promise(res => cv.toBlob(res, "image/jpeg", quality));
     if (blob && blob.size <= 2000000) return blob;
   }

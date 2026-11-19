@@ -81,6 +81,10 @@ begin
   if new.paid_on is null then raise exception 'Payment date is required.'; end if;
   if new.collected_by is null then raise exception 'The collecting agent is required.'; end if;
 
+  if not private.is_admin() and (new.paid_on < current_date - 3 or new.paid_on > current_date + 1) then
+    raise exception 'A payment must be recorded on the day it is collected. Ask the admin to correct the date.';
+  end if;
+
   select coalesce(sum(pay.amount),0) into v_paid
   from public.payments pay
   where pay.purchase_id = new.purchase_id
@@ -252,7 +256,7 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.register_customer(p_full_name text, p_phone text, p_location text, p_product_id bigint, p_plan_id bigint)
+CREATE OR REPLACE FUNCTION public.register_customer(p_full_name text, p_phone text, p_location text, p_product_id bigint, p_plan_id bigint, p_submission_id uuid default null)
  RETURNS bigint LANGUAGE plpgsql SET search_path TO ''
 AS $function$
 declare
@@ -260,22 +264,27 @@ declare
   v_name text := trim(coalesce(p_full_name, ''));
   v_phone text := nullif(regexp_replace(coalesce(p_phone, ''), '[\s\-]', '', 'g'), '');
   v_customer_id bigint;
+  v_existing bigint;
 begin
-  if v_uid is null then
-    raise exception 'You must sign in first.';
+  if v_uid is null then raise exception 'You must sign in first.'; end if;
+  -- sent before? return the same purchase instead of creating a second customer
+  if p_submission_id is not null then
+    select pu.id into v_existing from public.purchases pu join public.customers c on c.id = pu.customer_id
+    where c.client_submission_id = p_submission_id and c.registered_by = v_uid order by pu.id limit 1;
+    if found then return v_existing; end if;
   end if;
-  if length(v_name) < 2 then
-    raise exception 'Enter the customer''s full name.';
-  end if;
-  if v_phone is not null and v_phone !~ '^\+?[0-9]{9,15}$' then
-    raise exception 'Phone number must have 9 to 15 digits.';
-  end if;
-
-  insert into public.customers (full_name, phone, location, registered_by)
-  values (v_name, v_phone, nullif(trim(coalesce(p_location, '')), ''), v_uid)
-  returning id into v_customer_id;
-
-  -- validates active staff, stock, plan and price, and links the purchase to this agent
+  if length(v_name) < 2 then raise exception 'Enter the customer''s full name.'; end if;
+  if v_phone is not null and v_phone !~ '^\+?[0-9]{9,15}$' then raise exception 'Phone number must have 9 to 15 digits.'; end if;
+  begin
+    insert into public.customers (full_name, phone, location, registered_by, client_submission_id)
+    values (v_name, v_phone, nullif(trim(coalesce(p_location, '')), ''), v_uid, p_submission_id)
+    returning id into v_customer_id;
+  exception when unique_violation then
+    select pu.id into v_existing from public.purchases pu join public.customers c on c.id = pu.customer_id
+    where c.client_submission_id = p_submission_id and c.registered_by = v_uid order by pu.id limit 1;
+    if found then return v_existing; end if;
+    raise;
+  end;
   return public.create_purchase(v_customer_id, p_product_id, p_plan_id, current_date);
 end;
 $function$;

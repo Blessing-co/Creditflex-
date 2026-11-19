@@ -10,9 +10,20 @@ const cfSteps=[
  {title:"Catalogue",target:"catalogue",body:"The Catalogue shows every product and its full price, so you can answer customers when they ask what is available.",task:"Scroll and look around, then tap Next."},
  {title:"Analytics",target:"analytics",body:"Analytics shows totals and trends for the days you choose, for example which days brought in the most money.",task:"Tap 7 days.",hl:'[data-r="6"]',watch:['[data-r="6"]',"click"]},
  {title:"Settings and offline",target:"settings",body:"Choose how the app looks. If you ever have no internet, payments are kept safely on your phone and sent when you are back online. The admin only sees them after they have been sent.",task:"Tap Dark, then tap Light again.",hl:"#cf-theme",watch:["#cf-theme button","click"]},
- {title:"Account",target:"account",body:"Your details and your password live here. Change your password if you ever think someone else knows it."},
- {title:"Help and credit",target:"credit",body:"Need help? Call or WhatsApp us from this page. You can read How it works from the Menu at any time to refresh your memory."}
+ {title:"Account",target:"account",body:"Your details and password live here (Menu, Settings, Account). Change your password if you ever think someone else knows it."},
+ {title:"Help and credit",target:"credit",body:"Need help? Call or WhatsApp us from this page. You can read How it works from Menu, then Help, at any time to refresh your memory."}
 ];
+/* uuid that also works on older browsers */
+function cfUuid(){if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();const b=new Uint8Array(16);(window.crypto||{getRandomValues:a=>a.forEach((_,i)=>a[i]=Math.random()*256)}).getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;const h=[...b].map(x=>x.toString(16).padStart(2,"0")).join("");return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20);}
+/* read-through cache: fresh data when online (and saved), the saved copy when the network fails */
+async function cfRead(key,run){
+ const k="read:"+(S.me?S.me.id:"x")+":"+key;
+ if(!navigator.onLine){try{const c=await cfCacheGet(k);if(c&&c.data){window.cfStaleAt=c.cached_at;return {data:c.data,error:null,stale:c.cached_at};}}catch(x){}}
+ const res=await run();
+ if(!res.error){try{await cfCachePut(k,{data:res.data,cached_at:new Date().toISOString()});}catch(x){}return res;}
+ try{const c=await cfCacheGet(k);if(c&&c.data){window.cfStaleAt=c.cached_at;return {data:c.data,error:null,stale:c.cached_at};}}catch(x){}
+ return res;
+}
 let cfStep=0,cfActive=cfSteps;
 const cfDBName="creditflex-offline-v1",cfStore="pending-payments";
 function cfOpenDB(){return new Promise((resolve,reject)=>{if(!("indexedDB" in window))return reject(Error("Offline storage is not supported on this browser."));const req=indexedDB.open(cfDBName,2);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(cfStore))db.createObjectStore(cfStore,{keyPath:"id"});if(!db.objectStoreNames.contains("purchase-cache"))db.createObjectStore("purchase-cache",{keyPath:"id"});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
@@ -27,12 +38,24 @@ async function cfCacheRecent(rows){if(!S.me)return;await cfCachePut("recent:"+S.
 async function cfCachedRecent(){return S.me?cfCacheGet("recent:"+S.me.id):null;}
 function cfIsRecentDuplicate(row,recent){const day=today();return (recent||[]).some(p=>Number(p.customer_id)===Number(row.customer_id)&&Number(p.product_id)===Number(row.product_id)&&new Date(p.created_at).toLocaleDateString("en-CA")===day);}
 async function cfHasQueuedDuplicate(row){const rows=await cfAll();return rows.some(p=>p.collected_by===S.me.id&&Number(p.customer_id)===Number(row.customer_id)&&Number(p.product_id)===Number(row.product_id)&&new Date(p.queued_at).toLocaleDateString("en-CA")===today());}
-Object.assign(window,{cfCacheLedger,cfCachedLedger,cfCacheRecent,cfCachedRecent,cfIsRecentDuplicate,cfHasQueuedDuplicate,cfAll});
-window.queueCreditflexPayment=async function(row){try{await cfPut({id:crypto.randomUUID(),...row,queued_at:new Date().toISOString(),status:"pending"});return true;}catch(e){console.error("Offline queue error",e);return false;}};
+Object.assign(window,{cfRead,cfUuid,cfCacheLedger,cfCachedLedger,cfCacheRecent,cfCachedRecent,cfIsRecentDuplicate,cfHasQueuedDuplicate,cfAll});
+window.queueCreditflexRegistration=async function(row){try{await cfPut({id:cfUuid(),kind:"register",owner:S.me.id,...row,queued_at:new Date().toISOString(),status:"pending"});return true;}catch(x){console.error("Offline queue error",x);return false;}};
+window.queueCreditflexPayment=async function(row){try{await cfPut({id:cfUuid(),...row,queued_at:new Date().toISOString(),status:"pending"});return true;}catch(e){console.error("Offline queue error",e);return false;}};
 async function cfSyncInner(){
  if(!navigator.onLine||!S.me)return;
  let rows;try{rows=await cfAll();}catch(e){return;}
  for(const row of rows){
+  if(row.kind==="register"){
+   if(row.owner!==S.me.id||row.status==="needs-attention")continue;
+   try{
+    const r=await sb.rpc("register_customer",{p_full_name:row.p_full_name,p_phone:row.p_phone,p_location:row.p_location,p_product_id:row.p_product_id,p_plan_id:row.p_plan_id,p_submission_id:row.id});
+    if(!r.error){await cfDelete(row.id);continue;}
+    const m=String(r.error.message||"");
+    if(/failed to fetch|network|load failed|timeout|connection/i.test(m))break;
+    await cfPut({...row,status:"needs-attention",last_error:m});
+   }catch(x){break;}
+   continue;
+  }
   if(row.collected_by!==S.me.id)continue;
   try{
    const existing=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
@@ -131,7 +154,7 @@ window.viewCreditflexSettings=async function(){
  $("cf-clear").onclick=async()=>{if(!confirm("Clear the saved customer list on this phone? You can reload it when online."))return;try{await cfClearCache();$("cf-clear-msg").textContent="Saved customer list cleared.";}catch(e){$("cf-clear-msg").textContent="Could not clear: "+e.message;}};
  await cfRenderQueue();
 };
-async function cfRenderQueue(){const el=$("cf-queue-list");if(!el)return;const rows=await cfAll().catch(()=>[]);el.innerHTML=rows.length?rows.map(r=>'<div class="border-b border-slate-200 py-2"><div class="flex justify-between gap-2"><b>'+esc(r.customer_name||"Customer")+'</b><b>'+money(r.amount)+'</b></div><p class="text-sm opacity-70">'+esc(r.product_name||"Purchase")+' · '+esc(r.paid_on)+' · '+esc(r.status)+'</p>'+(r.last_error?'<p class="text-sm text-red-700">'+esc(r.last_error)+'</p>':'')+'</div>').join(""):'<p class="'+C.mute+'">No payments waiting to sync.</p>';}
+async function cfRenderQueue(){const el=$("cf-queue-list");if(!el)return;const rows=await cfAll().catch(()=>[]);el.innerHTML=rows.length?rows.map(r=>r.kind==="register"?'<div class="border-b border-slate-200 py-2"><div class="flex justify-between gap-2"><b>'+esc(r.p_full_name)+'</b><b>New customer</b></div><p class="text-sm opacity-70">'+esc(r.product_label||"Purchase")+' · '+esc(r.status)+'</p>'+(r.last_error?'<p class="text-sm text-red-700">'+esc(r.last_error)+'</p>':'')+'</div>':'<div class="border-b border-slate-200 py-2"><div class="flex justify-between gap-2"><b>'+esc(r.customer_name||"Customer")+'</b><b>'+money(r.amount)+'</b></div><p class="text-sm opacity-70">'+esc(r.product_name||"Purchase")+' · '+esc(r.paid_on)+' · '+esc(r.status)+'</p>'+(r.last_error?'<p class="text-sm text-red-700">'+esc(r.last_error)+'</p>':'')+'</div>').join(""):'<p class="'+C.mute+'">Nothing waiting to sync.</p>';}
 window.refreshCreditflexQueueCount=cfRenderQueue;
 window.viewCreditflexAccount=async function(){
  const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Account</h1><section class="'+C.card+' space-y-2"><div class="text-title-md">'+esc(S.me.full_name)+'</div><p class="'+C.mute+'">'+esc(S.me.email||"No email on file")+'</p><p class="'+C.mute+'">Role: '+esc(S.me.role)+'</p></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Change password</h2><form id="cf-password-form" class="space-y-3"><div><label class="'+C.lbl+'" for="cf-current">Current password</label><input id="cf-current" type="password" autocomplete="current-password" class="'+C.inp+'" required></div><div><label class="'+C.lbl+'" for="cf-new">New password</label><input id="cf-new" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required><p class="'+C.mute+' mt-1">Use at least 8 characters with letters and numbers.</p></div><div><label class="'+C.lbl+'" for="cf-confirm">Confirm new password</label><input id="cf-confirm" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required></div><button id="cf-password-save" class="'+C.btn+'">Update password</button><div id="cf-password-msg"></div></form></section>';
@@ -166,9 +189,10 @@ window.viewCreditflexExport = async function () {
   const staffName = async () => { const m = {}; (await cfFetchAll("staff", "id,full_name", "full_name")).forEach(x => m[x.id] = x.full_name); return m; };
   const jobs = {
     async pay() {
-      const [pays, led, names] = await Promise.all([cfFetchAll("payments", "id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason", "id"), cfFetchAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name", "purchase_id"), staffName()]);
+      const [pays, led, names] = await Promise.all([cfFetchAll("payments", "id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason", "id"), cfFetchAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name,total_price", "purchase_id"), staffName()]);
       const L = {}; led.forEach(x => L[x.purchase_id] = x);
-      cfCsvDownload("creditflex-payments-" + stamp() + ".csv", [["Payment ID", "Date", "Amount (GHS)", "Customer", "Phone", "Product", "Collected by", "Recorded at", "Cancelled", "Cancel reason"], ...pays.map(p => { const l = L[p.purchase_id] || {}; return [p.id, p.paid_on, p.amount, l.customer_name, l.customer_phone, l.product_name, names[p.collected_by] || "", p.created_at, p.voided_at ? "yes" : "no", p.void_reason || ""]; })]);
+      const run = cfRunning(pays, k => (L[k] || {}).total_price);
+      cfCsvDownload("creditflex-payments-" + stamp() + ".csv", [["Payment ID", "Date", "Amount (GHS)", "Customer", "Phone", "Product", "Price (GHS)", "Paid so far (GHS)", "Balance after this payment (GHS)", "Collected by", "Recorded at", "Cancelled", "Cancel reason"], ...pays.map(p => { const l = L[p.purchase_id] || {}; return [p.id, p.paid_on, p.amount, l.customer_name, l.customer_phone, l.product_name, l.total_price, (run.get(p.id) || {}).paid ?? "", (run.get(p.id) || {}).balance ?? "", names[p.collected_by] || "", p.created_at, p.voided_at ? "yes" : "no", p.void_reason || ""]; })]);
       return pays.length;
     },
     async cus() {

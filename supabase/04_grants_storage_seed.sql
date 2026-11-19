@@ -22,7 +22,7 @@ grant execute on function public.collection_summary(date, date) to authenticated
 grant execute on function public.complete_agent_onboarding() to authenticated;
 grant execute on function public.create_purchase(bigint, bigint, bigint, date) to authenticated;
 grant execute on function public.portfolio_summary() to authenticated;
-grant execute on function public.register_customer(text, text, text, bigint, bigint) to authenticated;
+grant execute on function public.register_customer(text, text, text, bigint, bigint, uuid) to authenticated;
 grant execute on function public.void_payment(bigint, text) to authenticated;
 
 -- ===== product photos (public read, admin write, 2 MB, images only) =====

@@ -233,19 +233,30 @@ async function cfFetchAll(table, select, order, filter) {
 }
 /* Same, but returns { data, error } like a normal query and never throws. */
 async function cfLoadAll(table, select, order, filter) {
-  try { return { data: await cfFetchAll(table, select, order, filter), error: null }; }
-  catch (error) { return { data: null, error }; }
+  const run = async () => { try { return { data: await cfFetchAll(table, select, order, filter), error: null }; } catch (error) { return { data: null, error }; } };
+  return filter ? run() : cfRead("all:" + table + ":" + select, run);
 }
+function cfStaleNote(at) { return at ? `<div class="bg-surface-container-high text-on-surface-variant rounded-xl px-3 py-2 text-label-md flex items-center gap-2">${ic("info", "text-[18px]")}<span>Saved copy from ${esc(new Date(at).toLocaleString())}. It updates when you are online.</span></div>` : ""; }
 
 /* ---------- shell ---------- */
-const MORE_ALL = [["learn", "How it works", "school", "Plain-language guide for newcomers"], ["analytics", "Analytics", "query_stats", "Collections, trends and top agents"], ["settings", "Settings", "settings", "Theme, colours, offline payments, training"], ["account", "Account", "manage_accounts", "Your details and password"], ["credit", "Credit", "info", "Who built this and how to reach us"], ["privacy", "Privacy & terms", "policy", "How we handle data and the rules of use"]];
-const MORE_ADMIN = [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"]];
-const MORE_KEYS = [...MORE_ALL, ...MORE_ADMIN].map(x => x[0]);
-const MAIN_TABS = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "Customers", "person_search"], ["catalogue", "Catalogue", "grid_view"]];
+/* Menu: 7 tabs for agents, 8 for admin. Everything else lives one tap deeper in Help, Manage or Settings. */
+const MAIN_TABS = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "Customers", "person_search"], ["catalogue", "Catalogue", "grid_view"], ["analytics", "Analytics", "query_stats"], ["help", "Help", "school"], ["settings", "Settings", "settings"]];
+const MANAGE_TAB = ["manage", "Manage", "group"];
+const PARENT = { learn: "help", credit: "help", privacy: "help", account: "settings", staff: "manage", financial: "manage", export: "manage", bulk: "catalogue" };
+const HUBS = {
+  help: { title: "Help", items: [["learn", "How it works", "school", "Plain-language guide for newcomers"], ["tour", "Guided tour", "info", "Walk through the app step by step"], ["privacy", "Privacy & terms", "policy", "How we handle data and the rules of use"], ["credit", "Credit & contact", "call", "Who built this and how to reach us"]] },
+  manage: { title: "Manage", admin: true, items: [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"], ["bulk", "Add many products", "upload_file", "Upload products from a list or CSV"]] }
+};
+const MORE_KEYS = ["learn", "credit", "privacy", "account", "staff", "financial", "export", "bulk", "help", "manage"];
+function viewHub(key) {
+  const h = HUBS[key];
+  $("view").innerHTML = `<h1 class="${C.h1}">${h.title}</h1><section class="${C.card} divide-y divide-outline-variant/40">${h.items.map(([k, l, i, d]) => `<button type="button" data-go="${k}" class="w-full flex items-center gap-3 py-3 text-left min-h-[56px] active:bg-surface-container-high">${ic(i, "text-[24px] text-primary")}<span class="min-w-0 flex-1"><span class="block text-label-lg">${l}</span><span class="block text-label-md text-on-surface-variant">${d}</span></span></button>`).join("")}</section>`;
+  $("view").querySelectorAll("[data-go]").forEach(b => b.onclick = () => { if (b.dataset.go === "tour") return startCreditflexTour(); S.tab = b.dataset.go; renderShell(); window.scrollTo(0, 0); });
+}
 function renderShell() {
   const admin = S.me.role === "admin";
-  const items = [...MAIN_TABS, ...(admin ? MORE_ADMIN : []).map(x => [x[0], x[1], x[2]]), ...MORE_ALL.map(x => [x[0], x[1], x[2]])];
-  const row = ([k, l, i]) => { const on = S.tab === k; return `<button data-t="${k}" type="button" role="menuitem" class="w-full flex items-center gap-3 px-4 min-h-[48px] text-left ${on ? "bg-primary-fixed text-on-primary-fixed font-extrabold" : "text-on-surface font-semibold"} active:bg-surface-container-high">${ic(i, "text-[22px] " + (on ? "fill" : ""))}<span class="text-label-lg">${l}</span></button>`; };
+  const items = [...MAIN_TABS, ...(admin ? [MANAGE_TAB] : [])], cur = PARENT[S.tab] || S.tab, par = PARENT[S.tab];
+  const row = ([k, l, i]) => { const on = cur === k; return `<button data-t="${k}" type="button" role="menuitem" class="w-full flex items-center gap-3 px-4 min-h-[48px] text-left ${on ? "bg-primary-fixed text-on-primary-fixed font-extrabold" : "text-on-surface font-semibold"} active:bg-surface-container-high">${ic(i, "text-[22px] " + (on ? "fill" : ""))}<span class="text-label-lg">${l}</span></button>`; };
   $app.innerHTML = `
   <header class="fixed top-0 inset-x-0 z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.06)]">
     <div class="h-16 max-w-2xl mx-auto px-4 flex items-center justify-between gap-2 relative">
@@ -261,7 +272,8 @@ function renderShell() {
       </nav>
     </div>
   </header>
-  <main id="view" class="max-w-2xl mx-auto px-4 pt-20 pb-10 space-y-4"></main>`;
+  <div id="backbar" class="max-w-2xl mx-auto px-4 pt-20"></div><main id="view" class="max-w-2xl mx-auto px-4 pt-2 pb-10 space-y-4"></main>`;
+  if (par) { const pl = ([...MAIN_TABS, MANAGE_TAB].find(x => x[0] === par) || [])[1] || "Back"; $("backbar").innerHTML = `<button id="back" type="button" class="min-h-[44px] flex items-center gap-1 text-label-lg text-primary">${ic("arrow_back", "text-[20px]")}<span>${pl}</span></button>`; $("back").onclick = () => { S.tab = par; renderShell(); window.scrollTo(0, 0); }; } else $("backbar").style.paddingTop = "4.5rem";
   const panel = $("menuPanel"), mb = $("menuBtn");
   const close = () => { panel.classList.add("hidden"); mb.setAttribute("aria-expanded", "false"); };
   mb.onclick = e => { e.stopPropagation(); const open = panel.classList.toggle("hidden") === false; mb.setAttribute("aria-expanded", String(open)); };
@@ -270,8 +282,11 @@ function renderShell() {
   window.cfMenuClose = close; document.addEventListener("click", close);
   $("lo").onclick = logout;
   panel.querySelectorAll("button[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); window.scrollTo(0, 0); });
+  if (HUBS[S.tab]) { if (HUBS[S.tab].admin && !admin) S.tab = "collections"; else return viewHub(S.tab); }
   ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk, privacy: viewCreditflexPrivacy })[S.tab]();
+  if (S.tab === "settings") cfSettingsLinks();
 }
+function cfSettingsLinks() { const t = setInterval(() => { const v = $("view"); if (!v || S.tab !== "settings" || v.querySelector("#cf-acct")) return clearInterval(t); if (!v.querySelector("h1")) return; clearInterval(t); v.insertAdjacentHTML("beforeend", `<section class="${C.card}"><button id="cf-acct" type="button" class="w-full flex items-center gap-3 min-h-[48px] text-left">${ic("manage_accounts", "text-[24px] text-primary")}<span class="flex-1"><span class="block text-label-lg">Account</span><span class="block text-label-md text-on-surface-variant">Your details and password</span></span></button></section>`); $("cf-acct").onclick = () => { S.tab = "account"; renderShell(); window.scrollTo(0, 0); }; }, 60); setTimeout(() => clearInterval(t), 4000); }
 
 /* ---------- collections ---------- */
 async function viewCollections() {
@@ -412,7 +427,7 @@ async function viewPay() {
             <button type="button" id="cFull" class="min-h-[52px] rounded-lg bg-tertiary-fixed text-on-tertiary-fixed flex flex-col items-center justify-center leading-tight active:scale-95 transition-all"><span class="text-label-md opacity-80">Full balance</span><span class="text-label-lg">${money(bal)}</span></button>
           </div>
         </div>
-        <div><label class="${C.lbl}" for="pd">Date</label><input id="pd" type="date" class="${C.inp}" value="${today()}" required></div>
+        ${S.me.role==="admin"?`<div><label class="${C.lbl}" for="pd">Date</label><input id="pd" type="date" class="${C.inp}" value="${today()}" required></div>`:`<p class="text-label-md text-on-surface-variant flex items-center gap-1.5">${ic("event","text-[18px]")}Recorded as today, ${esc(today())}</p>`}
         <button class="${C.btn}" id="pb">${ic("verified", "fill text-[24px]")}<span>Save payment</span></button>
       </form><div id="pm"></div></section>`;
     (async () => { let d = false; try { if (navigator.onLine) { const x = await sb.rpc("check_recent_payment_duplicate", { p_customer_id: r.customer_id, p_product_id: r.product_id }); d = !x.error && x.data === true; } else d = cfIsRecentDuplicate(r, cfRecent) || await cfHasQueuedDuplicate(r); } catch (e) {}
@@ -423,7 +438,7 @@ async function viewPay() {
     $("pf").onsubmit = async e => {
       e.preventDefault(); const b = $("pb"); busy(b, true);
       const amount = Number($("amt").value);
-      const paymentDate = $("pd").value;
+      const paymentDate = S.me.role==="admin" && $("pd") ? $("pd").value : today();
       if (!navigator.onLine) {
         if((cfIsRecentDuplicate(r,cfRecent)||await cfHasQueuedDuplicate(r))&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
         const queued = await queueCreditflexPayment({ purchase_id: r.purchase_id, customer_id:r.customer_id, product_id:r.product_id, amount, paid_on: paymentDate, collected_by: S.me.id, customer_name: r.customer_name, product_name: r.product_name });
@@ -437,7 +452,7 @@ async function viewPay() {
       const duplicateCheck=await sb.rpc("check_recent_payment_duplicate",{p_customer_id:r.customer_id,p_product_id:r.product_id});
       if(duplicateCheck.error){busy(b,false);return say("pm",cfErr(duplicateCheck.error));}
       if(duplicateCheck.data&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
-      const offlineId = crypto.randomUUID();
+      const offlineId = cfUuid();
       let { error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId });
       if (error && /offline_submission_id|column/i.test(error.message || "")) {
         ({ error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }));
@@ -480,8 +495,8 @@ async function cfRegisterForm() {
   const v = $("cbody");
   v.innerHTML = `<h1 class="${C.h1}">New customer</h1>${loading}`;
   const [{ data: prods }, { data: plans }] = await Promise.all([
-    sb.from("products").select("id,name,price").eq("in_stock", true).order("name"),
-    sb.from("payment_plans").select("id,name,frequency,installments").order("id")
+    cfRead("reg:products", () => sb.from("products").select("id,name,price").eq("in_stock", true).order("name")),
+    cfRead("reg:plans", () => sb.from("payment_plans").select("id,name,frequency,installments").order("id"))
   ]);
   if (!prods || !prods.length) return v.innerHTML = `<h1 class="${C.h1}">New customer</h1><div class="bg-surface-container-low rounded-xl p-5 text-center"><div class="w-12 h-12 mx-auto rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center">${ic("inventory_2", "text-[26px]")}</div><p class="${C.mute} mt-2">No products are in stock yet. An admin needs to add products in the Catalogue tab first.</p></div>`;
   v.innerHTML = `<h1 class="${C.h1}">Register a new customer</h1>
@@ -501,7 +516,12 @@ async function cfRegisterForm() {
   $("pr").onchange = preview; $("pl").onchange = preview; preview();
   $("rf").onsubmit = async e => {
     e.preventDefault(); const b = $("rb"); busy(b, true);
-    const { error } = await sb.rpc("register_customer", { p_full_name: $("n").value, p_phone: $("p").value, p_location: $("l").value, p_product_id: Number($("pr").value), p_plan_id: Number($("pl").value) });
+    const args = { p_full_name: $("n").value, p_phone: $("p").value, p_location: $("l").value, p_product_id: Number($("pr").value), p_plan_id: Number($("pl").value) };
+    const subId = cfUuid();
+    const keep = async () => { const pr = prods.find(x => x.id == args.p_product_id); const ok = await queueCreditflexRegistration({ id: subId, ...args, product_label: pr ? pr.name : "" }); busy(b, false); if (ok) { $("rf").reset(); preview(); say("rm", "No internet. Customer saved on this phone and will be registered when you are online. Record their payments after that.", true); } else say("rm", "Could not save on this phone. Try again when online."); };
+    if (!navigator.onLine) return keep();
+    const { error } = await sb.rpc("register_customer", { ...args, p_submission_id: subId });
+    if (error && /failed to fetch|network|load failed|timeout|connection|fetch/i.test(String(error.message || ""))) return keep();
     busy(b, false);
     if (error) return say("rm", cfErr(error));
     $("rf").reset(); preview(); say("rm", "Customer registered. You can now record their payments.", true);
@@ -509,15 +529,27 @@ async function cfRegisterForm() {
 }
 
 
+/* running balance per purchase: payments in the order recorded; cancelled ones are not counted */
+function cfRunning(pays, priceOf) {
+  const sorted = [...pays].sort((x, y) => String(x.created_at || x.paid_on).localeCompare(String(y.created_at || y.paid_on)) || Number(x.id) - Number(y.id));
+  const paid = {}, out = new Map();
+  sorted.forEach(p => {
+    const k = p.purchase_id, price = Number(priceOf(k) || 0);
+    if (p.voided_at) { out.set(p.id, null); return; }
+    paid[k] = Math.round(((paid[k] || 0) + Number(p.amount)) * 100) / 100;
+    out.set(p.id, { paid: paid[k], balance: Math.round((price - paid[k]) * 100) / 100 });
+  });
+  return out;
+}
+
 /* ---------- customer statement ---------- */
 async function cfStatements() {
   const v = $("cbody");
-  if (!navigator.onLine) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">Customer statements need an internet connection. Reconnect and try again.</div>`;
   v.innerHTML = loading;
-  const { data, error } = await cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]);
+  const { data, error, stale } = await cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]);
   if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const all = data || [];
-  v.innerHTML = `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
+  v.innerHTML = cfStaleNote(stale) + `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
     <input id="sq" type="search" autocomplete="off" class="${C.inp}" placeholder="Type a name or phone"></section>
     <section id="slist" class="space-y-2"></section><div id="sbox"></div>`;
   const list = () => {
@@ -530,27 +562,28 @@ async function cfStatements() {
 }
 async function cfStatement(c) {
   const box = $("sbox"); box.innerHTML = loading; box.scrollIntoView({ behavior: "smooth", block: "start" });
-  const led = await sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", c.id).order("created_at", { ascending: false });
+  const led = await cfRead("stmt:" + c.id, () => sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", c.id).order("created_at", { ascending: false }));
   if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(led.error))}</div>`;
   const purchases = led.data || [], ids = purchases.map(x => x.purchase_id);
   let pays = [];
   if (ids.length) {
-    const r = await sb.from("payments").select("id,purchase_id,amount,paid_on,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true });
+    const r = await cfRead("stmtp:" + c.id, () => sb.from("payments").select("id,purchase_id,amount,paid_on,created_at,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true }));
     if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(r.error))}</div>`;
     pays = r.data || [];
   }
+  const run = cfRunning(pays, k => (purchases.find(y => y.purchase_id === k) || {}).total_price);
   const tot = purchases.reduce((a, x) => a + Number(x.total_price), 0), paid = purchases.reduce((a, x) => a + Number(x.amount_paid), 0), bal = purchases.reduce((a, x) => a + Number(x.balance), 0);
   const text = () => ["Creditflex statement for " + c.full_name, ...purchases.map(x => "• " + x.product_name + ": paid " + money(x.amount_paid) + " of " + money(x.total_price) + ", balance " + money(x.balance)), "Total paid: " + money(paid), "Balance owed: " + money(bal), "Thank you."].join("\n");
   const wa = () => { let n = String(c.phone || "").replace(/[^0-9]/g, ""); if (n.startsWith("0")) n = "233" + n.slice(1); return "https://wa.me/" + n + "?text=" + encodeURIComponent(text()); };
-  box.innerHTML = `<section class="${C.card} space-y-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="text-title-md truncate">${esc(c.full_name)}</h2><p class="${C.mute}">${esc(c.phone || "No phone")}${c.location ? " · " + esc(c.location) : ""}</p></div></div>
+  box.innerHTML = cfStaleNote(led.stale) + `<section class="${C.card} space-y-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="text-title-md truncate">${esc(c.full_name)}</h2><p class="${C.mute}">${esc(c.phone || "No phone")}${c.location ? " · " + esc(c.location) : ""}</p></div></div>
       <div class="grid grid-cols-3 gap-2 text-center"><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Price</div><div class="text-label-lg break-words">${money(tot)}</div></div><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Paid</div><div class="text-label-lg break-words">${money(paid)}</div></div><div class="${C.stat}"><div class="text-label-md text-on-surface-variant uppercase">Owes</div><div class="text-label-lg text-tertiary-container break-words">${money(bal)}</div></div></div>
       ${purchases.length ? purchases.map(x => { const mine = pays.filter(p => p.purchase_id === x.purchase_id), pct = Number(x.total_price) ? Math.min(100, Math.round(Number(x.amount_paid) / Number(x.total_price) * 100)) : 0;
         return `<div class="rounded-xl bg-surface-container-low p-3"><div class="flex justify-between gap-2"><b class="text-body-lg">${esc(x.product_name)}</b><span class="text-label-md rounded-full px-2.5 py-0.5 ${x.status === "active" ? "bg-primary-fixed text-on-primary-fixed" : "bg-surface-container-high text-on-surface-variant"}">${esc(x.status)}</span></div>
         <div class="${C.mute}">${esc(x.plan_name)} · installment ${money(x.installment_amount)} · agent ${esc(x.agent_name)}</div>
         <div class="h-2 rounded-full bg-surface-container-high mt-2 overflow-hidden"><div class="h-full bg-primary-container" style="width:${pct}%"></div></div><div class="${C.mute} mt-1">${pct}% paid · balance ${money(x.balance)}</div>
-        <div class="divide-y divide-outline-variant/40 mt-2">${mine.length ? mine.map(p => `<div class="flex justify-between py-1.5 text-body-md"><span>${esc(p.paid_on)}</span><b>${money(p.amount)}</b></div>`).join("") : `<div class="${C.mute} py-1.5">No payments yet.</div>`}</div></div>`; }).join("") : `<p class="${C.mute}">This customer has no purchases yet.</p>`}
+        <div class="divide-y divide-outline-variant/40 mt-2">${mine.length ? mine.map(p => `<div class="flex justify-between gap-2 py-1.5 text-body-md"><span>${esc(p.paid_on)}</span><span class="text-on-surface-variant text-label-md">owes ${money((run.get(p.id) || {}).balance)}</span><b>${money(p.amount)}</b></div>`).join("") : `<div class="${C.mute} py-1.5">No payments yet.</div>`}</div></div>`; }).join("") : `<p class="${C.mute}">This customer has no purchases yet.</p>`}
       <div class="grid grid-cols-2 gap-2"><a id="swa" class="${C.btn} text-center no-underline" href="${wa()}" target="_blank" rel="noopener">${ic("call", "text-[20px]")}<span>WhatsApp</span></a><button id="scsv" type="button" class="${C.btn2}">${ic("download", "text-[20px]")}<span>CSV</span></button></div></section>`;
-  $("scsv").onclick = () => cfCsvDownload("statement-" + c.full_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "-" + today() + ".csv", [["Customer", "Product", "Date", "Amount (GHS)", "Price (GHS)", "Balance (GHS)"], ...pays.map(p => { const x = purchases.find(y => y.purchase_id === p.purchase_id) || {}; return [c.full_name, x.product_name, p.paid_on, p.amount, x.total_price, x.balance]; })]);
+  $("scsv").onclick = () => cfCsvDownload("statement-" + c.full_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + "-" + today() + ".csv", [["Customer", "Product", "Date", "Amount paid (GHS)", "Price (GHS)", "Paid so far (GHS)", "Balance after this payment (GHS)"], ...pays.map(p => { const x = purchases.find(y => y.purchase_id === p.purchase_id) || {}, r = run.get(p.id) || {}; return [c.full_name, x.product_name, p.paid_on, p.amount, x.total_price, r.paid, r.balance]; })]);
 }
 
 /* ---------- catalogue ---------- */
@@ -562,7 +595,7 @@ async function viewCatalogue() {
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>
     ${admin ? `<section class="${C.card}"><div class="grid grid-cols-2 gap-2"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><button class="${C.btn} !bg-secondary-container !text-on-secondary-container !shadow-none" id="addmany" type="button">${ic("photo_library", "text-[20px]")}<span>Add many</span></button></div><div id="pf"></div></section>` : ""}
     <div class="grid grid-cols-2 gap-3">${data.map(p => `<article class="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden flex flex-col">
-      ${p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" class="w-full aspect-square object-cover bg-surface-container-high">` : `<div class="w-full aspect-square bg-surface-container-high text-on-surface-variant flex flex-col items-center justify-center gap-1">${ic("image", "text-[32px]")}<span class="text-label-md">No photo</span></div>`}
+      ${p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" decoding="async" class="w-full aspect-square object-cover bg-surface-container-high">` : `<div class="w-full aspect-square bg-surface-container-high text-on-surface-variant flex flex-col items-center justify-center gap-1">${ic("image", "text-[32px]")}<span class="text-label-md">No photo</span></div>`}
       <div class="p-3 flex flex-col gap-1 flex-1"><b class="text-body-lg text-on-surface leading-tight">${esc(p.name)}</b><div class="text-currency-item text-primary-container">${money(p.price)}</div>
       ${p.in_stock ? "" : `<span class="self-start text-label-md bg-error-container text-on-error-container rounded-full px-2.5 py-0.5">Out of stock</span>`}
       ${admin ? `<button type="button" data-e="${p.id}" class="${C.btn2} mt-2 w-full">${ic("edit", "text-[18px]")}Edit</button>` : ""}</div></article>`).join("") || `<div class="col-span-2 bg-surface-container-low rounded-xl p-5 text-center ${C.mute}">No products yet.</div>`}</div>`;

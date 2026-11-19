@@ -39,3 +39,9 @@ Mobile web app for Creditflex field agents: record instalment payments, register
 Any new Material icon used with `ic("name")` must also be added to the `icons` list in `build/build.js`; the build stops and tells you if one is missing.
 
 No `.env` file is needed. The only key in the code is Supabase's public key.
+
+## Notes (offline, menu, dates)
+- Menu: 7 tabs (agent), 8 with Manage (admin). Help, Manage and Settings hold the rest (see `HUBS`/`PARENT` in app.js).
+- Payment dates: agents always record today (database enforces a small window, admins can correct). 
+- Offline: shell is cached by `sw.js` (stale-while-revalidate); lists are cached by `cfRead` in extras.js; payments and new customers queue in IndexedDB and sync when online.
+- CSV exports include "Paid so far" and "Balance after this payment" (`cfRunning` in app.js).
