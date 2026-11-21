@@ -74,3 +74,21 @@ revoke all on public.sms_log from anon, authenticated;
 grant select on public.sms_log to authenticated;
 create policy sms_log_select on public.sms_log for select to authenticated
   using (sent_by = (select auth.uid()) or (select private.is_admin()));
+
+-- announcements: admin writes; agents read those for everyone or for them; reads are per person
+alter table public.announcements enable row level security;
+alter table public.announcement_reads enable row level security;
+revoke all on public.announcements, public.announcement_reads from anon, authenticated;
+grant select, insert, update on public.announcements to authenticated;
+grant select, insert on public.announcement_reads to authenticated;
+create policy announcements_select on public.announcements for select to authenticated
+  using ((select private.is_active_staff()) and ((select private.is_admin()) or audience_agent_id is null or audience_agent_id = (select auth.uid())));
+create policy announcements_insert on public.announcements for insert to authenticated
+  with check ((select private.is_admin()) and created_by = (select auth.uid()));
+create policy announcements_update on public.announcements for update to authenticated
+  using ((select private.is_admin())) with check ((select private.is_admin()));
+create policy reads_select on public.announcement_reads for select to authenticated
+  using ((select private.is_active_staff()) and (staff_id = (select auth.uid()) or (select private.is_admin())));
+create policy reads_insert on public.announcement_reads for insert to authenticated
+  with check ((select private.is_active_staff()) and staff_id = (select auth.uid())
+    and exists (select 1 from public.announcements a where a.id = announcement_id));

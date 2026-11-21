@@ -242,12 +242,12 @@ function cfStaleNote(at) { return at ? `<div class="bg-surface-container-high te
 /* Menu: 7 tabs for agents, 8 for admin. Everything else lives one tap deeper in Help, Manage or Settings. */
 const MAIN_TABS = [["collections", "Collections", "account_balance_wallet"], ["pay", "Record payment", "payments"], ["register", "Customers", "person_search"], ["catalogue", "Catalogue", "grid_view"], ["analytics", "Analytics", "query_stats"], ["help", "Help", "school"], ["settings", "Settings", "settings"]];
 const MANAGE_TAB = ["manage", "Manage", "group"];
-const PARENT = { learn: "help", credit: "help", privacy: "help", account: "settings", staff: "manage", financial: "manage", export: "manage", bulk: "catalogue" };
+const PARENT = { learn: "help", credit: "help", privacy: "help", account: "settings", staff: "manage", financial: "manage", export: "manage", bulk: "catalogue", inbox: "collections", announce: "manage" };
 const HUBS = {
   help: { title: "Help", items: [["learn", "How it works", "school", "Plain-language guide for newcomers"], ["tour", "Guided tour", "info", "Walk through the app step by step"], ["privacy", "Privacy & terms", "policy", "How we handle data and the rules of use"], ["credit", "Credit & contact", "call", "Who built this and how to reach us"]] },
-  manage: { title: "Manage", admin: true, items: [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"], ["bulk", "Add many products", "upload_file", "Upload products from a list or CSV"]] }
+  manage: { title: "Manage", admin: true, items: [["staff", "Staff", "group", "Approve and manage agents"], ["financial", "Financial", "receipt_long", "Review and reverse payments"], ["export", "Export data", "download", "Download payments, customers and purchases"], ["announce", "Announcements", "campaign", "Send messages to your agents"], ["bulk", "Add many products", "upload_file", "Upload products from a list or CSV"]] }
 };
-const MORE_KEYS = ["learn", "credit", "privacy", "account", "staff", "financial", "export", "bulk", "help", "manage"];
+const MORE_KEYS = ["inbox", "announce", "learn", "credit", "privacy", "account", "staff", "financial", "export", "bulk", "help", "manage"];
 function viewHub(key) {
   const h = HUBS[key];
   $("view").innerHTML = `<h1 class="${C.h1}">${h.title}</h1><section class="${C.card} divide-y divide-outline-variant/40">${h.items.map(([k, l, i, d]) => `<button type="button" data-go="${k}" class="w-full flex items-center gap-3 py-3 text-left min-h-[56px] active:bg-surface-container-high">${ic(i, "text-[24px] text-primary")}<span class="min-w-0 flex-1"><span class="block text-label-lg">${l}</span><span class="block text-label-md text-on-surface-variant">${d}</span></span></button>`).join("")}</section>`;
@@ -265,7 +265,8 @@ function renderShell() {
         <div class="w-10 h-10 rounded-xl bg-primary-container text-on-primary flex items-center justify-center shrink-0">${ic("payments", "fill text-[22px]")}</div>
         <div class="min-w-0 leading-tight"><div class="text-label-lg text-on-surface">Creditflex</div><div class="text-label-md text-on-surface-variant truncate">${esc(S.me.full_name)} · ${esc(S.me.role)}</div></div>
       </div>
-      <button id="menuBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Open menu" class="min-h-[48px] min-w-[48px] px-3 flex items-center justify-center gap-1 rounded-xl bg-primary-fixed text-on-primary-fixed active:scale-95">${ic("menu", "text-[24px]")}<span class="text-label-md">Menu</span></button>
+      <div class="flex items-center gap-2">${admin ? "" : `<button id="bellBtn" type="button" aria-label="Announcements" class="relative min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface active:scale-95">${ic("notifications", "text-[24px]")}<span id="bellBadge" class="hidden absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-error text-on-error text-[11px] font-bold leading-[18px] text-center"></span></button>`}
+      <button id="menuBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Open menu" class="min-h-[48px] min-w-[48px] px-3 flex items-center justify-center gap-1 rounded-xl bg-primary-fixed text-on-primary-fixed active:scale-95">${ic("menu", "text-[24px]")}<span class="text-label-md">Menu</span></button></div>
       <nav id="menuPanel" role="menu" class="hidden absolute right-4 top-[60px] w-64 max-w-[calc(100vw-2rem)] max-h-[75vh] overflow-y-auto rounded-2xl bg-surface shadow-xl border border-outline-variant/50 py-2 z-50">
         ${items.map(row).join("")}
         <div class="my-1 border-t border-outline-variant/50"></div>
@@ -282,9 +283,10 @@ function renderShell() {
   if (window.cfMenuClose) document.removeEventListener("click", window.cfMenuClose);
   window.cfMenuClose = close; document.addEventListener("click", close);
   $("lo").onclick = logout;
+  if ($("bellBtn")) { $("bellBtn").onclick = () => { S.tab = "inbox"; renderShell(); window.scrollTo(0, 0); }; if (window.cfBellRefresh) cfBellRefresh(); }
   panel.querySelectorAll("button[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; renderShell(); window.scrollTo(0, 0); });
   if (HUBS[S.tab]) { if (HUBS[S.tab].admin && !admin) S.tab = "collections"; else return viewHub(S.tab); }
-  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk, privacy: viewCreditflexPrivacy })[S.tab]();
+  ({ collections: viewCollections, pay: viewPay, register: viewRegister, catalogue: viewCatalogue, staff: viewStaff, analytics: viewCreditflexAnalytics, settings: viewCreditflexSettings, account: viewCreditflexAccount, financial: viewCreditflexFinancial, credit: viewCreditflexCredit, export: viewCreditflexExport, learn: viewCreditflexLearn, bulk: viewCreditflexBulk, inbox: viewCreditflexInbox, announce: viewCreditflexAnnounce, privacy: viewCreditflexPrivacy })[S.tab]();
   if (S.tab === "settings") cfSettingsLinks();
 }
 function cfSettingsLinks() { const t = setInterval(() => { const v = $("view"); if (!v || S.tab !== "settings" || v.querySelector("#cf-acct")) return clearInterval(t); if (!v.querySelector("h1")) return; clearInterval(t); v.insertAdjacentHTML("beforeend", `<section class="${C.card}"><button id="cf-acct" type="button" class="w-full flex items-center gap-3 min-h-[48px] text-left">${ic("manage_accounts", "text-[24px] text-primary")}<span class="flex-1"><span class="block text-label-lg">Account</span><span class="block text-label-md text-on-surface-variant">Your details and password</span></span></button></section>`); $("cf-acct").onclick = () => { S.tab = "account"; renderShell(); window.scrollTo(0, 0); }; }, 60); setTimeout(() => clearInterval(t), 4000); }

@@ -179,3 +179,23 @@ create table if not exists public.sms_log (
   created_at timestamptz not null default now()
 );
 create unique index if not exists sms_log_one_sent_per_payment on public.sms_log (payment_id) where status = 'sent';
+
+-- announcements (admin to agents) and read receipts
+create table if not exists public.announcements (
+  id bigint generated always as identity primary key,
+  title text not null check (length(trim(title)) between 2 and 80),
+  body text not null check (length(trim(body)) between 2 and 600),
+  audience_agent_id uuid references public.staff(id),
+  created_by uuid not null references public.staff(id) default auth.uid(),
+  created_at timestamptz not null default now(),
+  archived_at timestamptz
+);
+create index if not exists announcements_created_idx on public.announcements (created_at desc);
+create index if not exists announcements_audience_idx on public.announcements (audience_agent_id);
+create table if not exists public.announcement_reads (
+  announcement_id bigint not null references public.announcements(id) on delete cascade,
+  staff_id uuid not null references public.staff(id) default auth.uid(),
+  read_at timestamptz not null default now(),
+  primary key (announcement_id, staff_id)
+);
+create index if not exists announcement_reads_staff_idx on public.announcement_reads (staff_id);

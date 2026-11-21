@@ -22,6 +22,8 @@ const stub = cfg => `(function(){
     customers:[{id:11,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'},{id:1,full_name:'Ama Serwaa',phone:'0244128901',location:'Makola',registered_by:'u1',created_at:'2026-11-15T09:00:00Z'}],
     payments:[{id:5,purchase_id:1,amount:30,paid_on:'2026-11-15',collected_by:'u1',created_at:new Date().toISOString(),voided_at:null}],
     payment_audit_log:[],
+    announcements:[{id:1,title:'New price list',body:'Prices changed today.',created_at:new Date().toISOString(),audience_agent_id:null}],
+    announcement_reads:[],
     staff:[{id:'u1',full_name:'Kofi Mensah',email:'k@x.com',phone:'',role:cfg.role,status:'active',supervisor_id:null}]
   };
   const RPC={collection_summary:[{paid_on:'2026-11-15',agent_name:'Kofi Mensah',payments_count:3,total:90}],
@@ -30,7 +32,7 @@ const stub = cfg => `(function(){
   function builder(t){const b={_single:false};
     ['select','eq','order','limit','gte','lte','is','in','range'].forEach(m=>b[m]=()=>b);
     b.maybeSingle=()=>{b._single=true;return b;};
-    b.insert=row=>{calls.push(['insert',t,row]);b._ins=true;return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
+    b.insert=row=>{calls.push(['insert',t,row]);b._ins=true;return b;}; b.upsert=row=>{calls.push(['upsert',t,row]);return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
     b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:(b._ins&&t==='payments'?{id:99}:null));
       return Promise.resolve({data,error:null}).then(res,rej);};
     return b;}
@@ -59,7 +61,7 @@ async function open(browser, cfg, ctxOpts = {}) {
   await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
   return { page, ctx, errors };
 }
-const HUBP = { learn: "help", privacy: "help", credit: "help", staff: "manage", financial: "manage", export: "manage", bulk: "manage" };
+const HUBP = { announce: "manage", learn: "help", privacy: "help", credit: "help", staff: "manage", financial: "manage", export: "manage", bulk: "manage" };
 const nav = async (p, k) => {
   const top = async key => { if (await p.$eval('#menuPanel', e => e.classList.contains('hidden'))) await p.click('#menuBtn'); await p.click('#menuPanel button[data-t="' + key + '"]'); };
   if (HUBP[k]) { await top(HUBP[k]); await p.waitForSelector('[data-go="' + k + '"]'); await p.click('[data-go="' + k + '"]'); }
@@ -238,6 +240,15 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
+  // 5b2. announcements (agent)
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  await p.waitForTimeout(600);
+  ok((await p.textContent("#bellBadge")) === "1", "bell shows 1 unread announcement");
+  await p.click("#bellBtn"); await p.waitForTimeout(500);
+  ok((await p.textContent("body")).includes("Prices changed today."), "inbox shows the announcement");
+  ok((await calls(p)).some(c => c[0] === "upsert" && c[1] === "announcement_reads"), "opening the inbox marks it read");
+  errs.push(...t.errors); await t.ctx.close();
+
   // 5c. quick PIN lock
   t = await open(browser, { role: "agent", onboarded: true, pin: true }); p = t.page;
   await p.waitForSelector("#cf-pin-a");
@@ -265,6 +276,9 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok((await p.$$("#menuPanel button[data-t]")).length === 8, "admin menu has 8 tabs");
   await nav(p, "pay"); await p.waitForSelector(".pick"); await p.click(".pick"); await p.waitForSelector("#pd");
   ok(true, "admin still has the payment date field");
+  await nav(p, "announce"); await p.waitForSelector("#an-f"); await p.fill("#an-t", "Meeting"); await p.fill("#an-b", "Friday 9am"); await p.click("#an-s"); await p.waitForTimeout(600);
+  ok((await calls(p)).some(c => c[0] === "insert" && c[1] === "announcements" && c[2].title === "Meeting" && c[2].audience_agent_id === null), "admin can send an announcement to all agents");
+  ok(await p.$("#bellBtn") === null, "admin has no agent bell");
   await nav(p, "financial"); await p.waitForTimeout(600); await shot(p, "13-financial");
   await nav(p, 'staff'); await p.waitForTimeout(500);
   await nav(p, "export"); await p.waitForTimeout(400); await shot(p, "15-export");
