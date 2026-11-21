@@ -245,11 +245,13 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok((await p.textContent("#cf-pin-msg")).includes("not easy to guess"), "easy PIN is refused");
   await p.fill("#cf-pin-a", "4827"); await p.fill("#cf-pin-b", "4827"); await p.click("#cf-pin-save"); await p.waitForTimeout(800);
   ok(await p.$("#cf-lock") === null, "PIN saved");
-  await p.evaluate(() => { const r = Date.now; Date.now = () => r() + 6 * 60000; document.dispatchEvent(new Event("visibilitychange")); });
-  await p.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); });
-  await p.waitForTimeout(300);
-  await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(400);
-  ok(await p.$("#cf-pin-in") !== null, "app locks after a break and asks for the PIN");
+  await p.evaluate(() => { const r = Date.now; Date.now = () => r() + 30 * 60000; });
+  await p.click("#menuBtn"); await p.waitForTimeout(300); await p.click("#menuBtn");
+  ok(await p.$("#cf-lock") === null, "no PIN is asked while the app is in use, however long the session");
+  await p.evaluate(() => { Object.defineProperty(document, "hidden", { value: true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+  await p.evaluate(() => { const r = Date.now; Date.now = () => r() + 11 * 60000; Object.defineProperty(document, "hidden", { value: false, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+  await p.waitForTimeout(400);
+  ok(await p.$("#cf-pin-in") !== null, "app locks only after being away 10+ minutes");
   await p.fill("#cf-pin-in", "0001"); await p.waitForTimeout(1200);
   ok((await p.textContent("#cf-pin-msg")).includes("Wrong PIN"), "wrong PIN is refused");
   await p.fill("#cf-pin-in", "4827"); await p.waitForTimeout(1200);
