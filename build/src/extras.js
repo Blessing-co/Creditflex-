@@ -139,6 +139,7 @@ window.viewCreditflexSettings=async function(){
  const seg=(id,opts,cur)=>'<div class="cf-seg" id="'+id+'">'+opts.map(o=>'<button type="button" data-v="'+o[0]+'" class="'+(o[0]===cur?"on":"")+'">'+o[1]+'</button>').join("")+'</div>';
  const sw=Object.keys(CF_ACCENTS).map(k=>'<button type="button" class="cf-sw'+(k===accent?" on":"")+'" data-a="'+k+'" aria-label="'+k+' colour" style="background:'+CF_ACCENTS[k][0]+'"></button>').join("");
  v.innerHTML='<h1 class="'+C.h1+'">Settings</h1>'
+ +'<section class="'+C.card+' space-y-2"><h2 class="text-title-md">Quick PIN</h2><p class="'+C.mute+'">'+(cfPinState().set?"A PIN locks the app after a short break. You stay signed in.":"No PIN set yet. Set one to protect customer records on this phone.")+'</p><button id="cf-pin-chg" type="button" class="'+C.btn2+' w-full">'+ic("lock","text-[20px]")+'<span>'+(cfPinState().set?"Change PIN":"Set a PIN")+'</span></button></section>'
  +'<section class="'+C.card+' space-y-4"><div class="flex items-center gap-2">'+ic("palette","text-[22px] text-primary")+'<h2 class="text-title-md">Look and feel</h2></div><div><div class="'+C.lbl+'">Theme</div>'+seg("cf-theme",[["auto","Auto"],["light","Light"],["dark","Dark"]],theme)+'</div><div><div class="'+C.lbl+'">Accent colour</div><div class="flex gap-3 flex-wrap" id="cf-accents">'+sw+'</div></div><p id="cf-theme-msg" class="'+C.mute+'">Saved on this phone.</p></section>'
  +'<section class="'+C.card+' space-y-3"><h2 class="text-title-md">Preferences</h2><label class="flex items-center justify-between gap-3 min-h-12"><span><b class="block">Vibrate when a payment is saved</b><span class="'+C.mute+'">A short buzz so you know it worked.</span></span><input id="cf-buzz" type="checkbox" class="w-6 h-6 accent-primary" '+(buzz?"checked":"")+'></label></section>'
  +'<section class="'+C.card+' space-y-3"><div class="flex items-center justify-between gap-2"><div class="flex items-center gap-2">'+ic("sync","text-[22px] text-primary")+'<h2 class="text-title-md">Offline payments</h2></div><span class="cf-pill '+(navigator.onLine?"ok":"off")+'">'+(navigator.onLine?"Online":"Offline")+'</span></div><p class="'+C.mute+'">Payments saved without internet wait here until they sync. The admin cannot see them before then.</p><p class="'+C.mute+'">Last sync: '+(last?esc(new Date(last).toLocaleString()):"not yet")+'</p><div id="cf-queue-list">'+loading+'</div><button id="cf-sync" class="'+C.btn+'">'+ic("sync","text-[22px]")+'<span>Sync now</span></button></section>'
@@ -146,6 +147,7 @@ window.viewCreditflexSettings=async function(){
  +'<section class="'+C.card+' space-y-1"><h2 class="text-title-md">About</h2><p class="'+C.mute+'">Creditflex Agents · version 2.1</p><p class="'+C.mute+'">Signed in as '+esc(S.me.full_name)+' ('+esc(S.me.role)+')</p></section>';
  $("cf-theme").querySelectorAll("button").forEach(b=>b.onclick=()=>{cfApplyTheme(b.dataset.v);$("cf-theme").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));$("cf-theme-msg").textContent="Theme saved on this phone.";});
  $("cf-accents").querySelectorAll("button").forEach(b=>b.onclick=()=>{cfApplyAccent(b.dataset.a);$("cf-accents").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));$("cf-theme-msg").textContent="Colour saved on this phone.";});
+ if($("cf-pin-chg"))$("cf-pin-chg").onclick=()=>cfPinChange();
  $("cf-buzz").onchange=e=>{try{localStorage.setItem("creditflex-buzz",e.target.checked?"on":"off");}catch(x){}if(e.target.checked)cfBuzz();};
  $("cf-sync").onclick=async()=>{const b=$("cf-sync");busy(b,true);await syncCreditflexOfflineQueue();busy(b,false);await cfRenderQueue();};
  $("cf-learn").onclick=()=>{S.tab="learn";renderShell();};
@@ -236,16 +238,59 @@ window.addEventListener("online",()=>setTimeout(()=>syncCreditflexOfflineQueue()
 window.addEventListener("load",()=>{if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(e=>console.warn("Offline app shell unavailable",e));});
 })();
 
-/* Auto sign-out after inactivity (shared phones, forgotten screens). Offline queue stays on the phone. */
+/* Quick PIN lock (like mobile-money apps): stay signed in, but reopening the app after a short break asks for a 4-digit PIN.
+   The PIN is checked on the phone only. Five wrong tries, or "Forgot PIN", sign the person out and they use their password. */
 (function(){
- let last=Date.now(),timer=null,bound=false;
- const limit=()=>((S.me&&S.me.role==="admin")?10:15)*60000;
- const touch=()=>{last=Date.now();};
- const check=()=>{if(!S.me)return;if(Date.now()-last>limit())logout("You were signed out after a period of inactivity. Sign in again to continue.");};
+ const uid=()=>S.me&&S.me.id, K=u=>"cf-pin:"+u, SN=u=>"cf-pin-later:"+u;
+ const getPin=()=>{try{return JSON.parse(localStorage.getItem(K(uid())));}catch(e){return null;}};
+ const b64=a=>btoa(String.fromCharCode(...new Uint8Array(a)));
+ async function hash(pin,salt){const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(pin),"PBKDF2",false,["deriveBits"]);return b64(await crypto.subtle.deriveBits({name:"PBKDF2",salt:Uint8Array.from(atob(salt),c=>c.charCodeAt(0)),iterations:100000,hash:"SHA-256"},k,256));}
+ const weak=p=>!/^[0-9]{4}$/.test(p)||/^(\d)\1{3}$/.test(p)||["1234","4321","0123","1122","2580","1212"].includes(p);
+ let last=Date.now(),hiddenAt=0,locked=false,timer=null,bound=false,asked=false;
+ const idleMs=()=>((S.me&&S.me.role==="admin")?3:5)*60000, awayMs=()=>((S.me&&S.me.role==="admin")?1:2)*60000;
+ const touch=()=>{if(!locked)last=Date.now();};
+ const wrap=h=>{const d=document.createElement("div");d.id="cf-lock";d.className="fixed inset-0 z-[200] bg-surface flex items-center justify-center p-6";d.innerHTML='<div class="w-full max-w-xs space-y-4 text-center">'+h+'</div>';document.body.appendChild(d);return d;};
+ const pinField=(id,label)=>'<label class="'+C.lbl+' block text-left" for="'+id+'">'+label+'</label><input id="'+id+'" type="password" inputmode="numeric" autocomplete="off" maxlength="4" class="'+C.inp+' text-center text-headline-md tracking-[0.5em]" placeholder="••••">';
+ async function setPin(p){const s=new Uint8Array(16);crypto.getRandomValues(s);const salt=b64(s);localStorage.setItem(K(uid()),JSON.stringify({salt,hash:await hash(p,salt),tries:0}));}
+ function lock(){
+  if(locked||!S.me||!getPin())return;locked=true;
+  const d=wrap('<div class="w-14 h-14 mx-auto rounded-full bg-primary-container text-on-primary flex items-center justify-center">'+ic("lock","text-[28px]")+'</div><h2 class="text-title-md">Enter your PIN</h2><p class="'+C.mute+'">Hi '+esc(S.me.full_name)+'. Your app was locked to keep customer records safe.</p>'+pinField("cf-pin-in","PIN")+'<div id="cf-pin-msg"></div><button id="cf-pin-go" type="button" class="'+C.btn+' w-full">Unlock</button><button id="cf-pin-forgot" type="button" class="'+C.btn2+' w-full">Forgot PIN? Sign in with password</button>');
+  const inp=d.querySelector("#cf-pin-in");inp.focus();
+  const fail=async(msg)=>{say("cf-pin-msg",msg);};
+  const go=async()=>{
+   const p=inp.value,rec=getPin();if(!rec)return unlock();
+   if(!/^[0-9]{4}$/.test(p))return fail("Enter your 4-digit PIN.");
+   if(await hash(p,rec.salt)===rec.hash){rec.tries=0;localStorage.setItem(K(uid()),JSON.stringify(rec));return unlock();}
+   rec.tries=(rec.tries||0)+1;localStorage.setItem(K(uid()),JSON.stringify(rec));inp.value="";
+   if(rec.tries>=5){localStorage.removeItem(K(uid()));d.remove();locked=false;return logout("Too many wrong PINs. Sign in with your password.");}
+   fail("Wrong PIN. "+(5-rec.tries)+" tries left.");
+  };
+  const unlock=()=>{d.remove();locked=false;last=Date.now();};
+  d.querySelector("#cf-pin-go").onclick=go;inp.onkeydown=e=>{if(e.key==="Enter")go();};inp.oninput=()=>{if(inp.value.length===4)go();};
+  d.querySelector("#cf-pin-forgot").onclick=()=>{localStorage.removeItem(K(uid()));d.remove();locked=false;logout("Sign in with your password. You can set a new PIN afterwards.");};
+ }
+ function ask(){
+  const u=uid();if(asked||!u||getPin()||document.getElementById("cf-lock"))return;
+  const admin=S.me.role==="admin";if(!admin&&!S.me.onboarding_completed_at)return;
+  let snooze=0;try{snooze=Number(localStorage.getItem(SN(u))||0);}catch(e){}
+  if(!admin&&Date.now()<snooze)return;
+  asked=true;
+  const d=wrap('<div class="w-14 h-14 mx-auto rounded-full bg-primary-container text-on-primary flex items-center justify-center">'+ic("lock","text-[28px]")+'</div><h2 class="text-title-md">Set a quick PIN</h2><p class="'+C.mute+'">Like your mobile-money app: you stay signed in, and a 4-digit PIN protects customer records if your phone is picked up or you leave the app for a few minutes.</p>'+pinField("cf-pin-a","Choose a 4-digit PIN")+pinField("cf-pin-b","Type it again")+'<div id="cf-pin-msg"></div><button id="cf-pin-save" type="button" class="'+C.btn+' w-full">Save PIN</button>'+(admin?'':'<button id="cf-pin-later" type="button" class="'+C.btn2+' w-full">Remind me later</button>'));
+  d.querySelector("#cf-pin-save").onclick=async()=>{const a=d.querySelector("#cf-pin-a").value,b=d.querySelector("#cf-pin-b").value;
+   if(weak(a))return say("cf-pin-msg","Choose 4 digits that are not easy to guess (not 1234, 0000 or repeated numbers).");
+   if(a!==b)return say("cf-pin-msg","The two PINs do not match.");
+   await setPin(a);d.remove();last=Date.now();};
+  const l=d.querySelector("#cf-pin-later");if(l)l.onclick=()=>{try{localStorage.setItem(SN(u),String(Date.now()+3*864e5));}catch(e){}d.remove();};
+ }
+ const check=()=>{if(!S.me||locked)return;if(getPin()&&(Date.now()-last>idleMs()||(hiddenAt&&Date.now()-hiddenAt>awayMs())))lock();hiddenAt=0;};
  window.cfIdleStart=function(){
-  if(!bound){bound=true;["pointerdown","keydown","touchstart","scroll"].forEach(ev=>document.addEventListener(ev,touch,{passive:true,capture:true}));document.addEventListener("visibilitychange",()=>{if(!document.hidden)check();});}
-  if(!timer){last=Date.now();timer=setInterval(check,20000);}
+  if(!bound){bound=true;["pointerdown","keydown","touchstart","scroll"].forEach(ev=>document.addEventListener(ev,touch,{passive:true,capture:true}));
+   document.addEventListener("visibilitychange",()=>{if(document.hidden)hiddenAt=Date.now();else check();});}
+  if(!timer){last=Date.now();timer=setInterval(check,15000);}
+  ask();
  };
- window.cfIdleStop=function(){if(timer){clearInterval(timer);timer=null;}};
- window.cfIdleLimit=limit;
+ window.cfIdleStop=function(){if(timer){clearInterval(timer);timer=null;}const d=document.getElementById("cf-lock");if(d)d.remove();locked=false;asked=false;};
+ window.cfPinState=()=>({set:!!getPin()});
+ window.cfPinChange=async function(){asked=false;try{localStorage.removeItem(K(uid()));}catch(e){}ask();};
+ window.cfPinRemove=function(){if(S.me&&S.me.role==="admin")return false;try{localStorage.removeItem(K(uid()));}catch(e){}return true;};
 })();

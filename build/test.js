@@ -46,6 +46,7 @@ const stub = cfg => `(function(){
 async function open(browser, cfg, ctxOpts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true, serviceWorkers: "block", ...ctxOpts });
   const page = await ctx.newPage(); const errors = [];
+  if (!cfg.pin) await page.addInitScript(() => { try { localStorage.setItem("cf-pin:u1", JSON.stringify({ salt: "AAAAAAAAAAAAAAAAAAAAAA==", hash: "x", tries: 0 })); } catch (e) {} });
   page.on("pageerror", e => { errors.push("pageerror: " + e.message); if (process.env.DBG) console.log("PAGEERR", e.message); });
   page.on("console", m => { if (process.env.DBG && m.type() === "error") console.log("CONSOLE", m.text()); });
   page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|net::ERR/.test(m.text())) errors.push("console: " + m.text()); });
@@ -237,11 +238,22 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
-  // 5c. inactivity sign-out
-  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
-  await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 16 * 60000; });
-  await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(600);
-  ok((await p.textContent("body")).includes("signed out after a period of inactivity"), "idle agent is signed out after 15 minutes");
+  // 5c. quick PIN lock
+  t = await open(browser, { role: "agent", onboarded: true, pin: true }); p = t.page;
+  await p.waitForSelector("#cf-pin-a");
+  await p.fill("#cf-pin-a", "1234"); await p.fill("#cf-pin-b", "1234"); await p.click("#cf-pin-save"); await p.waitForTimeout(300);
+  ok((await p.textContent("#cf-pin-msg")).includes("not easy to guess"), "easy PIN is refused");
+  await p.fill("#cf-pin-a", "4827"); await p.fill("#cf-pin-b", "4827"); await p.click("#cf-pin-save"); await p.waitForTimeout(800);
+  ok(await p.$("#cf-lock") === null, "PIN saved");
+  await p.evaluate(() => { const r = Date.now; Date.now = () => r() + 6 * 60000; document.dispatchEvent(new Event("visibilitychange")); });
+  await p.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(400);
+  ok(await p.$("#cf-pin-in") !== null, "app locks after a break and asks for the PIN");
+  await p.fill("#cf-pin-in", "0001"); await p.waitForTimeout(1200);
+  ok((await p.textContent("#cf-pin-msg")).includes("Wrong PIN"), "wrong PIN is refused");
+  await p.fill("#cf-pin-in", "4827"); await p.waitForTimeout(1200);
+  ok(await p.$("#cf-lock") === null && await p.$("#menuBtn") !== null, "right PIN unlocks without signing in again");
   errs.push(...t.errors); await t.ctx.close();
 
   // 6. admin
