@@ -42,3 +42,8 @@ create policy product_images_admin_update on storage.objects for update to authe
 insert into public.payment_plans (name, frequency, installments)
 select * from (values ('Daily for 60 days', 'daily', 60), ('Weekly for 12 weeks', 'weekly', 12)) v(name, frequency, installments)
 where not exists (select 1 from public.payment_plans);
+
+revoke execute on function public.save_push_subscription(text, text, text, text) from public, anon;
+revoke execute on function public.remove_push_subscription(text) from public, anon;
+grant execute on function public.save_push_subscription(text, text, text, text) to authenticated;
+grant execute on function public.remove_push_subscription(text) to authenticated;

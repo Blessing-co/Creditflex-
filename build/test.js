@@ -33,7 +33,7 @@ const stub = cfg => `(function(){
     ['select','eq','order','limit','gte','lte','is','in','range'].forEach(m=>b[m]=()=>b);
     b.maybeSingle=()=>{b._single=true;return b;};
     b.insert=row=>{calls.push(['insert',t,row]);b._ins=true;return b;}; b.upsert=row=>{calls.push(['upsert',t,row]);return b;}; b.update=row=>{calls.push(['update',t,row]);return b;};
-    b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:(b._ins&&t==='payments'?{id:99}:null));
+    b.then=(res,rej)=>{let data=D[t]; if(b._single) data=(t==='staff'?D.staff_me:(b._ins&&(t==='payments'||t==='announcements')?{id:99}:null));
       return Promise.resolve({data,error:null}).then(res,rej);};
     return b;}
   const sbm={auth:{getSession:async()=>({data:{session:cfg.loggedOut?null:{}}}),getUser:async()=>({data:{user:{id:'u1'}}}),
@@ -247,6 +247,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   await p.click("#bellBtn"); await p.waitForTimeout(500);
   ok((await p.textContent("body")).includes("Prices changed today."), "inbox shows the announcement");
   ok((await calls(p)).some(c => c[0] === "upsert" && c[1] === "announcement_reads"), "opening the inbox marks it read");
+  await p.waitForTimeout(4600); ok((await p.textContent("#inbox-push")).includes("Turn on notifications"), "inbox offers phone notifications");
   errs.push(...t.errors); await t.ctx.close();
 
   // 5c. quick PIN lock
@@ -279,6 +280,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   await nav(p, "announce"); await p.waitForSelector("#an-f"); await p.fill("#an-t", "Meeting"); await p.fill("#an-b", "Friday 9am"); await p.click("#an-s"); await p.waitForTimeout(600);
   ok((await calls(p)).some(c => c[0] === "insert" && c[1] === "announcements" && c[2].title === "Meeting" && c[2].audience_agent_id === null), "admin can send an announcement to all agents");
   ok(await p.$("#bellBtn") === null, "admin has no agent bell");
+  ok((await calls(p)).some(c => c[0] === "fn" && c[1] === "push" && c[2].action === "send"), "sending also triggers the phone notification");
   await nav(p, "financial"); await p.waitForTimeout(600); await shot(p, "13-financial");
   await nav(p, 'staff'); await p.waitForTimeout(500);
   await nav(p, "export"); await p.waitForTimeout(400); await shot(p, "15-export");

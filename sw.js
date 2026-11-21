@@ -1,4 +1,4 @@
-const SHELL_CACHE="creditflex-shell-v9";
+const SHELL_CACHE="creditflex-shell-v10";
 const RUNTIME_CACHE="creditflex-runtime-v2";
 const APP_URLS=["/","/styles.css","/app.js","/extras.js","/bulk.js","/notices.js","/legal.js","/vendor/supabase.js","/manifest.webmanifest","/icons/icon-192.png","/icons/apple-touch-icon.png"];
 const WARM_URLS=[];
@@ -32,5 +32,18 @@ self.addEventListener("fetch",event=>{
    if(sameOrigin&&event.request.mode==="navigate"){const home=await cache.match("/");if(home)return home;}
    throw error;
   }
+ })());
+});
+
+self.addEventListener("push",event=>{
+ let d={};try{d=event.data?event.data.json():{};}catch(e){d={title:"Creditflex",body:event.data?event.data.text():""};}
+ event.waitUntil(self.registration.showNotification(d.title||"Creditflex",{body:d.body||"",icon:"/icons/icon-192.png",badge:"/icons/icon-192.png",tag:"creditflex-announcement",renotify:true,data:{url:d.url||"/"}}));
+});
+self.addEventListener("notificationclick",event=>{
+ event.notification.close();
+ event.waitUntil((async()=>{
+  const all=await self.clients.matchAll({type:"window",includeUncontrolled:true});
+  for(const c of all){if("focus" in c){await c.focus();return;}}
+  if(self.clients.openWindow)await self.clients.openWindow((event.notification.data&&event.notification.data.url)||"/");
  })());
 });

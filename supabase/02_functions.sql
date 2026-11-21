@@ -458,3 +458,18 @@ CREATE TRIGGER payments_recalculate_after_void AFTER UPDATE ON public.payments F
 
 drop trigger if exists on_auth_user_created_creditflex on auth.users;
 CREATE TRIGGER on_auth_user_created_creditflex AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION private.handle_new_auth_user();
+
+-- phone notification subscriptions (saved by the signed-in person for their own phone)
+create or replace function public.save_push_subscription(p_endpoint text, p_p256dh text, p_auth text, p_user_agent text default null)
+returns void language plpgsql security definer set search_path to '' as $$
+begin
+  if (select auth.uid()) is null or not (select private.is_active_staff()) then raise exception 'You must be signed in as active staff.'; end if;
+  if p_endpoint is null or length(p_endpoint) < 20 or p_endpoint !~ '^https://' then raise exception 'Invalid subscription.'; end if;
+  insert into public.push_subscriptions (staff_id, endpoint, p256dh, auth, user_agent)
+  values ((select auth.uid()), p_endpoint, p_p256dh, p_auth, left(p_user_agent, 200))
+  on conflict (endpoint) do update set staff_id = excluded.staff_id, p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent;
+end $$;
+create or replace function public.remove_push_subscription(p_endpoint text)
+returns void language sql security definer set search_path to '' as $$
+  delete from public.push_subscriptions where endpoint = p_endpoint and staff_id = (select auth.uid());
+$$;

@@ -199,3 +199,19 @@ create table if not exists public.announcement_reads (
   primary key (announcement_id, staff_id)
 );
 create index if not exists announcement_reads_staff_idx on public.announcement_reads (staff_id);
+
+-- phone notifications (Web Push): one row per phone; keys are created and kept server-side by the "push" function
+create table if not exists public.push_subscriptions (
+  id bigint generated always as identity primary key,
+  staff_id uuid not null references public.staff(id) on delete cascade,
+  endpoint text not null unique, p256dh text not null, auth text not null, user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_staff_idx on public.push_subscriptions (staff_id);
+alter table public.push_subscriptions enable row level security;
+revoke all on public.push_subscriptions from anon, authenticated;
+create table if not exists public.push_keys (
+  id int primary key check (id = 1), public_key text not null, private_key text not null, created_at timestamptz not null default now()
+);
+alter table public.push_keys enable row level security;
+revoke all on public.push_keys from anon, authenticated;

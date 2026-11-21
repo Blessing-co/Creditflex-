@@ -110,7 +110,7 @@ async function loadMe() {
   if (data.role === "agent" && !data.onboarding_completed_at) setTimeout(() => startCreditflexTour(), 450);
   setTimeout(() => syncCreditflexOfflineQueue(), 700);
 }
-async function logout(note) { try { await sb.auth.signOut(); } catch (e) {} S.me = null; if (window.cfIdleStop) cfIdleStop(); renderLogin(typeof note === "string" ? note : undefined); }
+async function logout(note) { try { if (window.cfPushSignOutCleanup) await cfPushSignOutCleanup(); } catch (e) {} try { await sb.auth.signOut(); } catch (e) {} S.me = null; if (window.cfIdleStop) cfIdleStop(); renderLogin(typeof note === "string" ? note : undefined); }
 
 /* ---------- auth screens ---------- */
 function brand() {
