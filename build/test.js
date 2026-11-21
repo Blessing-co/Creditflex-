@@ -237,6 +237,13 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
+  // 5c. inactivity sign-out
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  await p.evaluate(() => { const real = Date.now; Date.now = () => real() + 16 * 60000; });
+  await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(600);
+  ok((await p.textContent("body")).includes("signed out after a period of inactivity"), "idle agent is signed out after 15 minutes");
+  errs.push(...t.errors); await t.ctx.close();
+
   // 6. admin
   t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
   ok(await p.$("#cf-tour") === null, "admin never sees the first-login tour");

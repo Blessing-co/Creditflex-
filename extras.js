@@ -235,3 +235,17 @@ const cfCoachCSS=document.createElement("style");cfCoachCSS.textContent='.cf-coa
 window.addEventListener("online",()=>setTimeout(()=>syncCreditflexOfflineQueue(),500));
 window.addEventListener("load",()=>{if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(e=>console.warn("Offline app shell unavailable",e));});
 })();
+
+/* Auto sign-out after inactivity (shared phones, forgotten screens). Offline queue stays on the phone. */
+(function(){
+ let last=Date.now(),timer=null,bound=false;
+ const limit=()=>((S.me&&S.me.role==="admin")?10:15)*60000;
+ const touch=()=>{last=Date.now();};
+ const check=()=>{if(!S.me)return;if(Date.now()-last>limit())logout("You were signed out after a period of inactivity. Sign in again to continue.");};
+ window.cfIdleStart=function(){
+  if(!bound){bound=true;["pointerdown","keydown","touchstart","scroll"].forEach(ev=>document.addEventListener(ev,touch,{passive:true,capture:true}));document.addEventListener("visibilitychange",()=>{if(!document.hidden)check();});}
+  if(!timer){last=Date.now();timer=setInterval(check,20000);}
+ };
+ window.cfIdleStop=function(){if(timer){clearInterval(timer);timer=null;}};
+ window.cfIdleLimit=limit;
+})();

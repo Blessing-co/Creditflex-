@@ -110,7 +110,7 @@ async function loadMe() {
   if (data.role === "agent" && !data.onboarding_completed_at) setTimeout(() => startCreditflexTour(), 450);
   setTimeout(() => syncCreditflexOfflineQueue(), 700);
 }
-async function logout() { await sb.auth.signOut(); S.me = null; renderLogin(); }
+async function logout(note) { try { await sb.auth.signOut(); } catch (e) {} S.me = null; if (window.cfIdleStop) cfIdleStop(); renderLogin(typeof note === "string" ? note : undefined); }
 
 /* ---------- auth screens ---------- */
 function brand() {
@@ -198,7 +198,7 @@ function renderBlocked() {
       <p class="${C.mute} mt-1">${pend ? "An admin needs to approve your account before you can use the app." : "Please contact your admin."}</p>
       <button class="${C.btn2} w-full mt-5" id="lo" type="button">Sign out</button>
     </section></main>`;
-  $("lo").onclick = logout;
+  $("lo").onclick = () => logout();
 }
 
 /* ---------- password rules ---------- */
@@ -254,6 +254,7 @@ function viewHub(key) {
   $("view").querySelectorAll("[data-go]").forEach(b => b.onclick = () => { if (b.dataset.go === "tour") return startCreditflexTour(); S.tab = b.dataset.go; renderShell(); window.scrollTo(0, 0); });
 }
 function renderShell() {
+  if (window.cfIdleStart) cfIdleStart();
   const admin = S.me.role === "admin";
   const items = [...MAIN_TABS, ...(admin ? [MANAGE_TAB] : [])], cur = PARENT[S.tab] || S.tab, par = PARENT[S.tab];
   const row = ([k, l, i]) => { const on = cur === k; return `<button data-t="${k}" type="button" role="menuitem" class="w-full flex items-center gap-3 px-4 min-h-[48px] text-left ${on ? "bg-primary-fixed text-on-primary-fixed font-extrabold" : "text-on-surface font-semibold"} active:bg-surface-container-high">${ic(i, "text-[22px] " + (on ? "fill" : ""))}<span class="text-label-lg">${l}</span></button>`; };
