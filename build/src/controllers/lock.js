@@ -14,7 +14,7 @@
  const awayMs=()=>((S.me&&S.me.role==="admin")?5:10)*60000;
  const mark=()=>{if(!S.me||locked)return;const n=Date.now();if(n-lastMark>10000){lastMark=n;lsSet(AK(uid()),String(n));}};
  const wrap=h=>{const d=document.createElement("div");d.id="cf-lock";d.className="fixed inset-0 z-[200] bg-surface flex items-center justify-center p-6";d.innerHTML='<div class="w-full max-w-xs space-y-4 text-center">'+h+'</div>';document.body.appendChild(d);return d;};
- const pinField=(id,label)=>'<label class="'+C.lbl+' block text-left" for="'+id+'">'+label+'</label><input id="'+id+'" type="password" inputmode="numeric" autocomplete="off" maxlength="4" class="'+C.inp+' text-center text-headline-md tracking-[0.5em]" placeholder="••••">';
+ const pinField=(id,label)=>'<label class="'+C.lbl+' block text-left" for="'+id+'">'+label+'</label><input id="'+id+'" type="password" data-noeye="1" inputmode="numeric" autocomplete="off" maxlength="4" class="'+C.inp+' text-center text-headline-md tracking-[0.5em]" placeholder="••••">';
  async function setPin(p){const s=new Uint8Array(16);crypto.getRandomValues(s);const salt=b64(s);lsSet(K(uid()),JSON.stringify({salt,hash:await hash(p,salt),tries:0}));}
  /* fingerprint / face through the phone's own screen-lock sensor (WebAuthn, platform authenticator) */
  const bioSupported=async()=>{try{return !!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());}catch(e){return false;}};

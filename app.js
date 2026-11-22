@@ -137,6 +137,32 @@ window.addEventListener("load", () => {
 window.addEventListener("load",()=>{if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(e=>console.warn("Offline app shell unavailable",e));});
 
 ;
+/* ===== core/eye.js ===== */
+/* Show/hide eye on every password box (sign-in, sign-up, new password, change password). Add data-noeye to opt out. */
+function cfEyeAttach(inp) {
+  if (inp.dataset.eye || inp.dataset.noeye) return;
+  inp.dataset.eye = "1";
+  const wrap = document.createElement("div"); wrap.className = "relative";
+  inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp); inp.classList.add("pr-12");
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "cf-eye absolute right-1 top-1/2 -translate-y-1/2 min-h-[44px] min-w-[44px] flex items-center justify-center text-on-surface-variant";
+  b.setAttribute("aria-label", "Show password"); b.innerHTML = ic("visibility", "text-[22px]");
+  b.onclick = () => {
+    const show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    b.innerHTML = ic(show ? "visibility_off" : "visibility", "text-[22px]");
+    b.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    inp.focus();
+  };
+  wrap.appendChild(b);
+}
+(function () {
+  const scan = () => document.querySelectorAll("input[type=password]:not([data-eye]):not([data-noeye])").forEach(cfEyeAttach);
+  const start = () => { scan(); new MutationObserver(scan).observe(document.body, { childList: true, subtree: true }); };
+  if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
+
+;
 /* ===== models/data.js ===== */
 /* MODEL: reading lists from the database (paging) and saved copies for offline reading. */
 async function cfFetchAll(table, select, order, filter) {
@@ -1655,7 +1681,7 @@ window.cfOpenLegal = function () {
  const awayMs=()=>((S.me&&S.me.role==="admin")?5:10)*60000;
  const mark=()=>{if(!S.me||locked)return;const n=Date.now();if(n-lastMark>10000){lastMark=n;lsSet(AK(uid()),String(n));}};
  const wrap=h=>{const d=document.createElement("div");d.id="cf-lock";d.className="fixed inset-0 z-[200] bg-surface flex items-center justify-center p-6";d.innerHTML='<div class="w-full max-w-xs space-y-4 text-center">'+h+'</div>';document.body.appendChild(d);return d;};
- const pinField=(id,label)=>'<label class="'+C.lbl+' block text-left" for="'+id+'">'+label+'</label><input id="'+id+'" type="password" inputmode="numeric" autocomplete="off" maxlength="4" class="'+C.inp+' text-center text-headline-md tracking-[0.5em]" placeholder="••••">';
+ const pinField=(id,label)=>'<label class="'+C.lbl+' block text-left" for="'+id+'">'+label+'</label><input id="'+id+'" type="password" data-noeye="1" inputmode="numeric" autocomplete="off" maxlength="4" class="'+C.inp+' text-center text-headline-md tracking-[0.5em]" placeholder="••••">';
  async function setPin(p){const s=new Uint8Array(16);crypto.getRandomValues(s);const salt=b64(s);lsSet(K(uid()),JSON.stringify({salt,hash:await hash(p,salt),tries:0}));}
  /* fingerprint / face through the phone's own screen-lock sensor (WebAuthn, platform authenticator) */
  const bioSupported=async()=>{try{return !!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());}catch(e){return false;}};

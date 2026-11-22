@@ -7,13 +7,13 @@ execFileSync(path.join(dir, "node_modules/.bin/tailwindcss"),
   ["-c", "tailwind.config.js", "-i", "input.css", "-o", "out.css", "--minify"], { cwd: dir, stdio: "inherit" });
 const css = fs.readFileSync(path.join(dir, "out.css"), "utf8");
 
-const icons = ["account_balance_wallet", "add", "arrow_back", "policy", "photo_library", "upload_file", "block", "call", "cancel", "check_circle", "delete", "download", "event", "campaign", "notifications", "send", "menu", "edit", "error", "grid_view", "group", "hourglass_top", "image", "info", "inventory_2", "lock", "logout", "manage_accounts", "more_horiz", "palette", "payments", "person_add", "person_search", "query_stats", "receipt_long", "school", "search", "settings", "sync", "verified"].sort();
+const icons = ["account_balance_wallet", "add", "arrow_back", "policy", "photo_library", "upload_file", "block", "call", "cancel", "check_circle", "delete", "download", "event", "visibility", "visibility_off", "campaign", "notifications", "send", "menu", "edit", "error", "grid_view", "group", "hourglass_top", "image", "info", "inventory_2", "lock", "logout", "manage_accounts", "more_horiz", "palette", "payments", "person_add", "person_search", "query_stats", "receipt_long", "school", "search", "settings", "sync", "verified"].sort();
 const url = "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0..1,0&amp;icon_names=" + icons.join(",") + "&amp;display=block";
 
 const srcDir = path.join(dir, "src");
 let html = fs.readFileSync(path.join(srcDir, "index.html"), "utf8");
 // The app is written as small files in folders (core, models, views, controllers, routes) and joined, in this order, into one app.js for the phone.
-const ORDER = ["core/config.js", "core/net.js", "core/client.js", "core/state.js", "core/ui.js", "core/security.js", "core/pwa.js",
+const ORDER = ["core/config.js", "core/net.js", "core/client.js", "core/state.js", "core/ui.js", "core/security.js", "core/pwa.js", "core/eye.js",
   "models/data.js", "models/ledger.js", "models/auth.js", "models/staff.js", "models/products.js", "models/plans.js", "models/customers.js",
   "models/payments.js", "models/purchases.js", "models/summary.js", "models/announcements.js", "models/offline.js",
   "routes.js", "views/shell.js", "views/hub.js", "views/auth.js",

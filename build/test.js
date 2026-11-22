@@ -240,6 +240,16 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
+  // 5a. show/hide password eye
+  t = await open(browser, { role: "agent", onboarded: true, loggedOut: true }); p = t.page;
+  await p.waitForSelector("#pw");
+  ok(await p.$eval("#pw", e => e.type) === "password" && await p.$(".cf-eye") !== null, "sign-in password is hidden and has an eye button");
+  await p.fill("#pw", "Secret123"); await p.click(".cf-eye");
+  ok(await p.$eval("#pw", e => e.type) === "text", "tapping the eye shows the password");
+  await p.click(".cf-eye");
+  ok(await p.$eval("#pw", e => e.type) === "password", "tapping again hides it");
+  errs.push(...t.errors); await t.ctx.close();
+
   // 5b1. Back button
   t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
   await nav(p, "pay"); await nav(p, "catalogue");
