@@ -1,5 +1,6 @@
 /* ===== core/config.js ===== */
 /* Settings that never change while the app runs. */
+const APP_BUILD = "2026-11-22 14:54";   // filled in by build.js
 const SUPABASE_URL = "https://dsjuwmtojudcaulfqmyp.supabase.co";
 const SUPABASE_KEY = "sb_publishable_pSzeeh2eHthcVfL7ZQzZug_xmdN9t2a";
 const RECOVERY = /type=recovery/.test(location.hash);
@@ -7,6 +8,14 @@ const HASHERR = ((location.hash.match(/error_description=([^&]+)/) || [])[1] || 
 /* Network layer: every request gets a time limit; reads are retried a couple of times.
    Writes are never retried here (a payment that timed out is queued and re-sent safely
    with its offline_submission_id by the offline queue). */
+
+;
+/* ===== core/errors.js ===== */
+/* Remembers the last few error messages so "Report a problem" can attach them. Nothing is sent unless the person sends a report. */
+const CF_ERRORS = [];
+function cfPushErr(s) { CF_ERRORS.push(new Date().toISOString().slice(11, 19) + " " + String(s).slice(0, 200)); if (CF_ERRORS.length > 5) CF_ERRORS.shift(); }
+window.addEventListener("error", e => cfPushErr((e.message || "error") + " @" + String(e.filename || "").split("/").pop() + ":" + (e.lineno || 0)));
+window.addEventListener("unhandledrejection", e => cfPushErr("promise: " + String((e.reason && e.reason.message) || e.reason)));
 
 ;
 /* ===== core/net.js ===== */
@@ -311,6 +320,16 @@ const Summary = {
 };
 
 ;
+/* ===== models/reports.js ===== */
+/* MODEL: problem reports sent by agents to the admin. */
+const Reports = {
+  send: row => sb.from("problem_reports").insert(row),
+  mine: staffId => sb.from("problem_reports").select("id,message,status,created_at").eq("reporter_id", staffId).order("created_at", { ascending: false }).limit(10),
+  all: () => sb.from("problem_reports").select("*").order("created_at", { ascending: false }).limit(100),
+  setStatus: (id, status) => sb.from("problem_reports").update({ status }).eq("id", id)
+};
+
+;
 /* ===== models/announcements.js ===== */
 /* MODEL: announcements, read receipts and phone-notification subscriptions. */
 const Announcements = {
@@ -402,19 +421,23 @@ const ROUTES = {
     ["learn",   "How it works",    "school", "Plain-language guide for newcomers"],
     ["tour",    "Guided tour",     "info",   "Walk through the app step by step", () => startCreditflexTour()],
     ["privacy", "Privacy & terms", "policy", "How we handle data and the rules of use"],
-    ["credit",  "Credit & contact","call",   "Who built this and how to reach us"] ] },
+    ["credit",  "Credit & contact","call",   "Who built this and how to reach us"],
+    ["report",  "Report a problem","bug_report","Tell the admin something is not working"] ] },
   settings:    { label: "Settings",       icon: "settings",               menu: true, view: () => { viewCreditflexSettings(); cfSettingsLinks(); } },
   manage:      { label: "Manage",         icon: "group",                  menu: true, admin: true, hub: [
     ["staff",     "Staff",              "group",        "Approve and manage agents"],
     ["financial", "Financial",          "receipt_long", "Review and reverse payments"],
     ["export",    "Export data",        "download",     "Download payments, customers and purchases"],
     ["announce",  "Announcements",      "campaign",     "Send messages to your agents"],
+    ["reports",   "Problem reports",    "bug_report",   "Problems your agents have reported"],
     ["bulk",      "Add many products",  "upload_file",  "Upload products from a list or CSV"] ] },
 
   /* ----- pages reached from somewhere else (not in the menu) ----- */
   learn:     { parent: "help",        view: () => viewCreditflexLearn() },
   privacy:   { parent: "help",        view: () => viewCreditflexPrivacy() },
   credit:    { parent: "help",        view: () => viewCreditflexCredit() },
+  report:    { parent: "help",        view: () => viewCreditflexReport() },
+  reports:   { parent: "manage",      admin: true, view: () => viewCreditflexReports() },
   account:   { parent: "settings",    view: () => viewCreditflexAccount() },
   inbox:     { parent: "collections", view: () => viewCreditflexInbox() },
   staff:     { parent: "manage",      admin: true, view: () => viewStaff() },
@@ -1234,6 +1257,52 @@ window.viewCreditflexCredit=function(){const v=$("view");
  +'<p class="text-xs text-center opacity-60">Creditflex Agents · Ghana</p>';};
 
 ;
+/* ===== controllers/report.js ===== */
+/* CONTROLLER: Report a problem (everyone) and Problem reports (admin). */
+(function () {
+"use strict";
+const when = iso => new Date(iso).toLocaleString();
+
+window.viewCreditflexReport = async function () {
+  const v = $("view");
+  v.innerHTML = `<h1 class="${C.h1}">Report a problem</h1>
+  <section class="${C.card} space-y-3"><p class="${C.mute}">Something not working, confusing or slow? Tell us what you were doing and what happened. We add your phone model, the app version and recent error messages to help fix it. We never send passwords or customer details.</p>
+    <form id="rp-f" class="space-y-3"><div><label class="${C.lbl}" for="rp-m">What went wrong?</label><textarea id="rp-m" class="${C.inp}" rows="5" maxlength="1000" required placeholder="Example: I tapped Save payment and it kept loading"></textarea><div id="rp-c" class="${C.mute} text-right">0 / 1000</div></div>
+    <button class="${C.btn}" id="rp-s">${ic("send", "text-[22px]")}<span>Send report</span></button><div id="rp-msg"></div></form></section>
+  <div id="rp-mine"></div>`;
+  $("rp-m").oninput = () => { $("rp-c").textContent = $("rp-m").value.length + " / 1000"; };
+  $("rp-f").onsubmit = async e => {
+    e.preventDefault(); const b = $("rp-s"); busy(b, true);
+    const { error } = await Reports.send({ reporter_id: S.me.id, message: $("rp-m").value.trim(), page: String(S.tab).slice(0, 60), user_agent: navigator.userAgent.slice(0, 300), app_build: APP_BUILD, recent_errors: CF_ERRORS.join("\n").slice(0, 2000) || null });
+    busy(b, false);
+    if (error) return say("rp-msg", navigator.onLine ? cfErr(error) : "No internet. Your text is still here. Try again when you are online.");
+    $("rp-f").reset(); $("rp-c").textContent = "0 / 1000"; say("rp-msg", "Thank you. Your report was sent.", true); mine();
+  };
+  async function mine() {
+    const r = await Reports.mine(S.me.id); const box = $("rp-mine"); if (!box || r.error || !(r.data || []).length) return;
+    box.innerHTML = `<h2 class="text-title-md px-1">Your recent reports</h2>` + r.data.map(x => `<section class="${C.card} space-y-1"><p class="text-body-md whitespace-pre-wrap break-words">${esc(x.message)}</p><p class="${C.mute}">${esc(when(x.created_at))} · ${x.status === "done" ? "Fixed or answered" : "Waiting"}</p></section>`).join("");
+  }
+  mine();
+};
+
+window.viewCreditflexReports = async function () {
+  if (S.me.role !== "admin") return go("collections");
+  const v = $("view"); v.innerHTML = `<h1 class="${C.h1}">Problem reports</h1>${loading}`;
+  const [rp, st] = await Promise.all([Reports.all(), Staff.names()]);
+  if (rp.error) return v.innerHTML = `<h1 class="${C.h1}">Problem reports</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(rp.error))}</div>`;
+  const names = {}; (st.data || []).forEach(s => names[s.id] = s.full_name);
+  const list = rp.data || [];
+  v.innerHTML = `<h1 class="${C.h1}">Problem reports</h1>` + (list.length ? list.map(x => `<section class="${C.card} space-y-2 ${x.status === "new" ? "border-l-4 border-primary" : "opacity-80"}">
+    <div class="flex items-start justify-between gap-2"><b class="text-body-lg">${esc(names[x.reporter_id] || "Agent")}</b><span class="text-label-md rounded-full px-2.5 py-0.5 ${x.status === "new" ? "bg-primary-fixed text-on-primary-fixed" : "bg-surface-container-high"}">${x.status === "new" ? "New" : "Done"}</span></div>
+    <p class="text-body-md whitespace-pre-wrap break-words">${esc(x.message)}</p>
+    <p class="${C.mute}">${esc(when(x.created_at))} · page: ${esc(x.page || "?")} · build ${esc(x.app_build || "?")}</p>
+    <details><summary class="text-label-md text-primary min-h-[40px] flex items-center">Phone and error details</summary><p class="${C.mute} break-words">${esc(x.user_agent || "")}</p>${x.recent_errors ? `<pre class="text-[12px] whitespace-pre-wrap break-words bg-surface-container-high rounded-lg p-2 mt-1">${esc(x.recent_errors)}</pre>` : `<p class="${C.mute}">No error messages were recorded.</p>`}</details>
+    <button type="button" data-st="${x.id}" data-to="${x.status === "new" ? "done" : "new"}" class="${C.btn2}">${x.status === "new" ? "Mark as done" : "Reopen"}</button></section>`).join("") : `<div class="${C.card} text-center ${C.mute}">No reports yet.</div>`);
+  v.querySelectorAll("[data-st]").forEach(b => b.onclick = async () => { busy(b, true); const { error } = await Reports.setStatus(Number(b.dataset.st), b.dataset.to); if (error) { busy(b, false); return alert(cfErr(error)); } viewCreditflexReports(); });
+};
+})();
+
+;
 /* ===== controllers/bulk.js ===== */
 /* Creditflex bulk product upload (admin): paste a list, import a CSV file, or add many photos at once,
    check everything in one list, then save all in one go. */
@@ -1748,4 +1817,5 @@ window.cfOpenLegal = function () {
 ;
 /* ===== main.js ===== */
 /* Start the app once the page has loaded. */
+window.__cfBooted = true;   // the whole app file loaded and ran (checked by the old-phone guard in index.html)
 document.addEventListener("DOMContentLoaded", boot);

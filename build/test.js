@@ -24,6 +24,7 @@ const stub = cfg => `(function(){
     payment_audit_log:[],
     announcements:[{id:1,title:'New price list',body:'Prices changed today.',created_at:new Date().toISOString(),audience_agent_id:null}],
     announcement_reads:[],
+    problem_reports:[{id:1,reporter_id:'u1',message:'App is slow',page:'pay',user_agent:'UA',app_build:'x',recent_errors:null,status:'new',created_at:new Date().toISOString()}],
     staff:[{id:'u1',full_name:'Kofi Mensah',email:'k@x.com',phone:'',role:cfg.role,status:'active',supervisor_id:null}]
   };
   const RPC={collection_summary:[{paid_on:'2026-11-15',agent_name:'Kofi Mensah',payments_count:3,total:90}],
@@ -61,7 +62,7 @@ async function open(browser, cfg, ctxOpts = {}) {
   await page.goto("http://localhost:8765/"); await page.waitForTimeout(900);
   return { page, ctx, errors };
 }
-const HUBP = { announce: "manage", learn: "help", privacy: "help", credit: "help", staff: "manage", financial: "manage", export: "manage", bulk: "manage" };
+const HUBP = { report: "help", reports: "manage", announce: "manage", learn: "help", privacy: "help", credit: "help", staff: "manage", financial: "manage", export: "manage", bulk: "manage" };
 const nav = async (p, k) => {
   const top = async key => { if (await p.$eval('#menuPanel', e => e.classList.contains('hidden'))) await p.click('#menuBtn'); await p.click('#menuPanel button[data-t="' + key + '"]'); };
   if (HUBP[k]) { await top(HUBP[k]); await p.waitForSelector('[data-go="' + k + '"]'); await p.click('[data-go="' + k + '"]'); }
@@ -248,6 +249,17 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(await p.$eval("#pw", e => e.type) === "text", "tapping the eye shows the password");
   await p.click(".cf-eye");
   ok(await p.$eval("#pw", e => e.type) === "password", "tapping again hides it");
+  errs.push(...t.errors); await t.ctx.close();
+
+  // 5a2. report a problem
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  await nav(p, "report"); await p.waitForSelector("#rp-f"); await p.fill("#rp-m", "Save payment keeps loading"); await p.click("#rp-s"); await p.waitForTimeout(500);
+  ok((await calls(p)).some(c => c[0] === "insert" && c[1] === "problem_reports" && c[2].message.includes("keeps loading") && c[2].app_build && c[2].user_agent), "agent can send a problem report with phone details");
+  ok((await p.textContent("body")).includes("Your report was sent"), "agent sees confirmation");
+  errs.push(...t.errors); await t.ctx.close();
+  t = await open(browser, { role: "admin", onboarded: true }); p = t.page;
+  await nav(p, "reports"); await p.waitForSelector("h1"); await p.waitForTimeout(400);
+  ok((await p.textContent("body")).includes("Problem reports"), "admin can open Problem reports");
   errs.push(...t.errors); await t.ctx.close();
 
   // 5b1. Back button

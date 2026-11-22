@@ -23,6 +23,23 @@
 <body>
 <div id="app"></div>
 
+<script>
+/* Old-phone guard (plain old JavaScript on purpose): if this phone's browser cannot run the app, say so clearly instead of a blank screen. */
+(function () {
+  function show(why) {
+    var a = document.getElementById("app"); if (!a || window.__cfBooted) return;
+    a.innerHTML = '<div style="max-width:420px;margin:0 auto;padding:32px 20px;font-family:sans-serif;color:#1b1c1b;text-align:center">' +
+      '<h2 style="margin:0 0 12px">This phone cannot open Creditflex yet</h2>' +
+      '<p style="line-height:1.5">Its browser is too old or is blocking something. Please update <b>Chrome</b> (Android) or <b>Safari</b> (iPhone), or open this same link in Chrome. If it still does not work, tell your admin your phone model.</p>' +
+      '<button onclick="location.reload()" style="margin-top:12px;padding:12px 20px;border:0;border-radius:12px;background:#0b6b4f;color:#fff;font-size:16px">Try again</button>' +
+      '<p style="margin-top:20px;font-size:12px;color:#777;word-break:break-word">' + why + ' · ' + navigator.userAgent + '</p></div>';
+  }
+  var missing = [];
+  if (!window.Promise) missing.push("Promise"); if (!window.fetch) missing.push("fetch"); if (!window.indexedDB) missing.push("indexedDB"); if (!window.localStorage) missing.push("localStorage");
+  if (missing.length) { document.addEventListener("DOMContentLoaded", function () { show("missing: " + missing.join(", ")); }); }
+  window.addEventListener("load", function () { show("the app file did not run"); });
+})();
+</script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 /* Settings that never change while the app runs. */
+const APP_BUILD = "__BUILD__";   // filled in by build.js
 const SUPABASE_URL = "https://dsjuwmtojudcaulfqmyp.supabase.co";
 const SUPABASE_KEY = "sb_publishable_pSzeeh2eHthcVfL7ZQzZug_xmdN9t2a";
 const RECOVERY = /type=recovery/.test(location.hash);

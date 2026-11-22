@@ -16,13 +16,30 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0..1,0&amp;icon_names=account_balance_wallet,add,arrow_back,block,call,campaign,cancel,check_circle,delete,download,edit,error,event,grid_view,group,hourglass_top,image,info,inventory_2,lock,logout,manage_accounts,menu,more_horiz,notifications,palette,payments,person_add,person_search,photo_library,policy,query_stats,receipt_long,school,search,send,settings,sync,upload_file,verified,visibility,visibility_off&amp;display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0..1,0&amp;icon_names=account_balance_wallet,add,arrow_back,block,bug_report,call,campaign,cancel,check_circle,delete,download,edit,error,event,grid_view,group,hourglass_top,image,info,inventory_2,lock,logout,manage_accounts,menu,more_horiz,notifications,palette,payments,person_add,person_search,photo_library,policy,query_stats,receipt_long,school,search,send,settings,sync,upload_file,verified,visibility,visibility_off&amp;display=block" rel="stylesheet">
 <script src="/vendor/supabase.js"></script>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div id="app"></div>
 
+<script>
+/* Old-phone guard (plain old JavaScript on purpose): if this phone's browser cannot run the app, say so clearly instead of a blank screen. */
+(function () {
+  function show(why) {
+    var a = document.getElementById("app"); if (!a || window.__cfBooted) return;
+    a.innerHTML = '<div style="max-width:420px;margin:0 auto;padding:32px 20px;font-family:sans-serif;color:#1b1c1b;text-align:center">' +
+      '<h2 style="margin:0 0 12px">This phone cannot open Creditflex yet</h2>' +
+      '<p style="line-height:1.5">Its browser is too old or is blocking something. Please update <b>Chrome</b> (Android) or <b>Safari</b> (iPhone), or open this same link in Chrome. If it still does not work, tell your admin your phone model.</p>' +
+      '<button onclick="location.reload()" style="margin-top:12px;padding:12px 20px;border:0;border-radius:12px;background:#0b6b4f;color:#fff;font-size:16px">Try again</button>' +
+      '<p style="margin-top:20px;font-size:12px;color:#777;word-break:break-word">' + why + ' · ' + navigator.userAgent + '</p></div>';
+  }
+  var missing = [];
+  if (!window.Promise) missing.push("Promise"); if (!window.fetch) missing.push("fetch"); if (!window.indexedDB) missing.push("indexedDB"); if (!window.localStorage) missing.push("localStorage");
+  if (missing.length) { document.addEventListener("DOMContentLoaded", function () { show("missing: " + missing.join(", ")); }); }
+  window.addEventListener("load", function () { show("the app file did not run"); });
+})();
+</script>
 <script src="/app.js"></script>
 </body>
 </html>
