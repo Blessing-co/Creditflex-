@@ -1,6 +1,6 @@
-const SHELL_CACHE="creditflex-shell-v10";
+const SHELL_CACHE="creditflex-shell-v11";
 const RUNTIME_CACHE="creditflex-runtime-v2";
-const APP_URLS=["/","/styles.css","/app.js","/extras.js","/bulk.js","/notices.js","/legal.js","/vendor/supabase.js","/manifest.webmanifest","/icons/icon-192.png","/icons/apple-touch-icon.png"];
+const APP_URLS=["/","/styles.css","/app.js","/vendor/supabase.js","/manifest.webmanifest","/icons/icon-192.png","/icons/apple-touch-icon.png"];
 const WARM_URLS=[];
 self.addEventListener("install",event=>{
  event.waitUntil((async()=>{

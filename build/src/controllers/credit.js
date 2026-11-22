@@ -1,0 +1,7 @@
+/* CONTROLLER: Credit and contact page. */
+window.viewCreditflexCredit=function(){const v=$("view");
+ v.innerHTML='<h1 class="'+C.h1+'">Credit</h1>'
+ +'<section class="'+C.card+' space-y-3"><div class="flex items-center gap-3"><div class="w-12 h-12 rounded-xl bg-primary-container text-on-primary flex items-center justify-center">'+ic("payments","fill text-[26px]")+'</div><div><div class="text-title-md">Creditflex Agents</div><div class="'+C.mute+'">Instalment collections for field agents</div></div></div></section>'
+ +'<section class="'+C.card+' space-y-3"><h2 class="text-title-md">Built by</h2><div class="flex items-center gap-3"><span class="w-11 h-11 rounded-full bg-primary-fixed text-on-primary-fixed flex items-center justify-center text-title-md">C</span><div><b class="block">Cronos (Peter)</b><span class="'+C.mute+'">Project owner and developer</span></div></div></section>'
+ +'<section class="'+C.card+' space-y-2"><h2 class="text-title-md">Contact and support</h2><a class="'+C.btn2+' w-full" href="tel:+233206709055">'+ic("call","text-[22px]")+'<span>Call 020 670 9055</span></a><a class="'+C.btn2+' w-full" href="https://wa.me/233206709055" target="_blank" rel="noopener"><span>WhatsApp 020 670 9055</span></a><a class="'+C.btn2+' w-full" href="mailto:Blisscoenergy001@gmail.com"><span>Blisscoenergy001@gmail.com</span></a></section>'
+ +'<p class="text-xs text-center opacity-60">Creditflex Agents · Ghana</p>';};

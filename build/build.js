@@ -12,7 +12,18 @@ const url = "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:
 
 const srcDir = path.join(dir, "src");
 let html = fs.readFileSync(path.join(srcDir, "index.html"), "utf8");
-const js = ["app.js", "extras.js", "bulk.js", "notices.js", "legal.js"].map(f => [f, fs.readFileSync(path.join(srcDir, f), "utf8")]);
+// The app is written as small files in folders (core, models, views, controllers, routes) and joined, in this order, into one app.js for the phone.
+const ORDER = ["core/config.js", "core/net.js", "core/client.js", "core/state.js", "core/ui.js", "core/security.js", "core/pwa.js",
+  "models/data.js", "models/ledger.js", "models/offline.js",
+  "routes.js", "views/shell.js", "views/hub.js", "views/auth.js",
+  "controllers/session.js", "controllers/collections.js", "controllers/pay.js", "controllers/customers.js", "controllers/catalogue.js", "controllers/staff.js",
+  "controllers/tour.js", "controllers/learn.js", "controllers/analytics.js", "controllers/settings.js", "controllers/account.js", "controllers/financial.js",
+  "controllers/export.js", "controllers/credit.js", "controllers/bulk.js", "controllers/notices.js", "controllers/legal.js", "controllers/lock.js", "main.js"];
+const onDisk = []; (function walk(d) { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) walk(p); else if (f.name.endsWith(".js")) onDisk.push(path.relative(srcDir, p)); } })(srcDir);
+const forgotten = onDisk.filter(f => !ORDER.includes(f));
+if (forgotten.length) { console.error("Source files not listed in ORDER (build.js): " + forgotten.join(", ")); process.exit(1); }
+const bundle = ORDER.map(f => "/* ===== " + f + " ===== */\n" + fs.readFileSync(path.join(srcDir, f), "utf8")).join("\n;\n");
+const js = [["app.js", bundle]];
 // every icon used in the source must be in the list
 const used = new Set();
 for (const text of [html, ...js.map(x => x[1])]) {

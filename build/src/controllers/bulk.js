@@ -78,7 +78,7 @@ async function preparePhoto(file) {
 
 window.viewCreditflexBulk = async function () {
   const v = $("view");
-  if (S.me.role !== "admin") { S.tab = "collections"; return renderShell(); }
+  if (S.me.role !== "admin") { return go("collections"); }
   v.innerHTML = `<h1 class="${C.h1}">Add many products</h1>${loading}`;
   const ex = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
   if (ex.error) return v.innerHTML = `<h1 class="${C.h1}">Add many products</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(ex.error))}</div>`;
@@ -167,7 +167,7 @@ window.viewCreditflexBulk = async function () {
     return list.length > room ? list.length - room : 0;
   };
 
-  $("bk-back").onclick = () => { S.tab = "catalogue"; renderShell(); };
+  $("bk-back").onclick = () => { go("catalogue"); };
   $("bk-ex").onchange = e => { onExisting = e.target.value; paintChips(); };
   $("bk-blank").onclick = () => { addRows([{}]); const last = $("bk-rows").querySelector("[data-row]:last-child [data-name]"); if (last) last.focus(); };
   $("bk-clear").onclick = () => { if (rows.length && !confirm("Remove everything from the list?")) return; rows.forEach(r => r.preview && URL.revokeObjectURL(r.preview)); rows = []; paintRows(); say("bk-note", ""); };
@@ -250,7 +250,7 @@ window.viewCreditflexBulk = async function () {
       if (result.photosFailed) msg += " " + result.photosFailed + " photo" + (result.photosFailed > 1 ? "s" : "") + " could not be uploaded (add them later with Edit).";
       if (result.failed) msg += " " + result.failed + " could not be saved. They stay in the list with the reason.";
       paintRows(); say("bk-msg", msg, !result.failed);
-      if (!result.failed) $("bk-msg").insertAdjacentHTML("beforeend", `<button id="bk-open" type="button" class="${C.btn2} w-full mt-2">${ic("inventory_2", "text-[20px]")}<span>Open the catalogue</span></button>`), $("bk-open").onclick = () => { S.tab = "catalogue"; renderShell(); };
+      if (!result.failed) $("bk-msg").insertAdjacentHTML("beforeend", `<button id="bk-open" type="button" class="${C.btn2} w-full mt-2">${ic("inventory_2", "text-[20px]")}<span>Open the catalogue</span></button>`), $("bk-open").onclick = () => { go("catalogue"); };
     } catch (err) { say("bk-msg", cfErr(err) || "Saving failed. Check the list and try again."); }
     saving = false; busy(btn, false); paintChips();
   };

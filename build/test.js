@@ -240,6 +240,22 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) process
   ok(rc.length === rb + 1 && rc[rc.length - 1][2].p_submission_id, "queued customer registered once, with a safe-retry id");
   errs.push(...t.errors); await t.ctx.close();
 
+  // 5b1. Back button
+  t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
+  await nav(p, "pay"); await nav(p, "catalogue");
+  await p.goBack(); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => S.tab)) === "pay", "phone Back returns to the previous page (Record payment)");
+  await p.goBack(); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => S.tab)) === "collections", "phone Back again returns to Home (Collections)");
+  await p.goForward(); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => S.tab)) === "pay", "Forward works too");
+  await nav(p, "learn"); ok((await p.evaluate(() => S.tab)) === "learn", "opened a page inside Help");
+  await p.goBack(); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => S.tab)) === "help", "Back from a Help page returns to the Help list");
+  await nav(p, "learn"); await p.click("#back"); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => S.tab)) === "help", "the on-screen Back bar also returns to the Help list");
+  errs.push(...t.errors); await t.ctx.close();
+
   // 5b2. announcements (agent)
   t = await open(browser, { role: "agent", onboarded: true }); p = t.page;
   await p.waitForTimeout(600);

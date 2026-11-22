@@ -72,7 +72,7 @@ window.viewCreditflexInbox = async function () {
 
 /* admin: write and manage announcements */
 window.viewCreditflexAnnounce = async function () {
-  if (S.me.role !== "admin") { S.tab = "collections"; return renderShell(); }
+  if (S.me.role !== "admin") { return go("collections"); }
   const v = $("view"); v.innerHTML = `<h1 class="${C.h1}">Announcements</h1>${loading}`;
   const [ag, an, rd] = await Promise.all([
     sb.from("staff").select("id,full_name").eq("role", "agent").eq("status", "active").order("full_name"),
