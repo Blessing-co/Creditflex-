@@ -22,7 +22,7 @@ async function cfSyncInner(){
   if(row.kind==="register"){
    if(row.owner!==S.me.id||row.status==="needs-attention")continue;
    try{
-    const r=await sb.rpc("register_customer",{p_full_name:row.p_full_name,p_phone:row.p_phone,p_location:row.p_location,p_product_id:row.p_product_id,p_plan_id:row.p_plan_id,p_submission_id:row.id});
+    const r=await Customers.register({p_full_name:row.p_full_name,p_phone:row.p_phone,p_location:row.p_location,p_product_id:row.p_product_id,p_plan_id:row.p_plan_id},row.id);
     if(!r.error){await cfDelete(row.id);continue;}
     const m=String(r.error.message||"");
     if(/failed to fetch|network|load failed|timeout|connection/i.test(m))break;
@@ -32,14 +32,14 @@ async function cfSyncInner(){
   }
   if(row.collected_by!==S.me.id)continue;
   try{
-   const existing=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
+   const existing=await Payments.findByOfflineId(row.id);
    if(existing.data){await cfDelete(row.id);continue;}
    const payload={purchase_id:row.purchase_id,amount:row.amount,paid_on:row.paid_on,collected_by:row.collected_by,offline_submission_id:row.id};
-   const result=await sb.from("payments").insert(payload);
+   const result=await Payments.insertRaw(payload);
    if(!result.error){await cfDelete(row.id);continue;}
    const msg=String(result.error.message||"");
    if(/duplicate key|unique constraint/i.test(msg)){
-    const check=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
+    const check=await Payments.findByOfflineId(row.id);
     if(check.data){await cfDelete(row.id);continue;}
    }
    if(/failed to fetch|network|load failed|timeout|connection/i.test(msg))break;

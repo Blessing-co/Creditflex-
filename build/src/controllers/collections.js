@@ -14,7 +14,7 @@ async function viewCollections() {
   const load = async () => {
     const f = $("df").value, t = $("dt").value;
     $("out").innerHTML = loading;
-    const { data, error } = await sb.rpc("collection_summary", { p_from: f, p_to: t });
+    const { data, error } = await Summary.collections(f, t);
     if (error) { $("out").innerHTML = ""; return say("cm", cfErr(error)); }
     exportRows=data||[];
     say("cm", "");
@@ -34,8 +34,8 @@ async function viewCollections() {
     const f = $("df").value, t = $("dt").value;
     $("nc").innerHTML = "";
     const [c, st] = await Promise.all([
-      sb.from("customers").select("id,full_name,phone,location,registered_by,created_at").gte("created_at", f + "T00:00:00").lte("created_at", t + "T23:59:59.999").order("created_at", { ascending: false }).limit(200),
-      sb.from("staff").select("id,full_name")
+      Customers.registeredBetween(f, t),
+      Staff.everyone()
     ]);
     if (c.error || !c.data) return;
     const names = {}; (st.data || []).forEach(x => names[x.id] = x.full_name);
@@ -47,7 +47,7 @@ async function viewCollections() {
   $("go").onclick = () => { load(); loadNew(); };
   $("csv").onclick=()=>{if(!exportRows.length)return say("cm","There are no collection rows to export for this date range.");const cell=v=>{let s=String(v??"");if(/^[=+\-@\t\r]/.test(s))s="'"+s;return '"' + s.replace(/"/g,'""') + '"';};const lines=[["Date","Agent","Payments","Total (GHS)"],...exportRows.map(r=>[r.paid_on,r.agent_name,r.payments_count,r.total])].map(row=>row.map(cell).join(",")).join("\r\n");const url=URL.createObjectURL(new Blob(["\ufeff"+lines],{type:"text/csv;charset=utf-8;"}));const a=document.createElement("a");a.href=url;a.download="creditflex-collections-"+$("df").value+"-to-"+$("dt").value+".csv";a.click();URL.revokeObjectURL(url);};
   load(); loadNew();
-  const { data: port } = await sb.rpc("portfolio_summary");
+  const { data: port } = await Summary.portfolio();
   if (port && port.length) {
     const out = port.reduce((a, r) => a + Number(r.outstanding), 0);
     $("port").innerHTML = `<section class="${C.card}"><h2 class="text-title-md mb-3">Money still owed</h2>

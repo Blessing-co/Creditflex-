@@ -186,6 +186,122 @@ function cfRunning(pays, priceOf) {
 /* ---------- SMS receipt (sent by a server function; the SMS key never reaches the phone) ---------- */
 
 ;
+/* ===== models/auth.js ===== */
+/* MODEL: sign-in, sessions and passwords (Supabase Auth). */
+const Auth = {
+  getSession: () => sb.auth.getSession(),
+  getUser: () => sb.auth.getUser(),
+  signIn: (email, password) => sb.auth.signInWithPassword({ email, password }),
+  signUp: (email, password, fullName, phone) => sb.auth.signUp({ email, password, options: { data: { full_name: fullName, phone } } }),
+  signOut: () => sb.auth.signOut(),
+  sendResetLink: (email, redirectTo) => sb.auth.resetPasswordForEmail(email, { redirectTo }),
+  setPassword: password => sb.auth.updateUser({ password }),
+  onChange: fn => sb.auth.onAuthStateChange(fn)
+};
+
+;
+/* ===== models/staff.js ===== */
+/* MODEL: staff (admins and agents). Every function returns Supabase's { data, error }. */
+const Staff = {
+  me: id => sb.from("staff").select("id,full_name,email,phone,role,status,supervisor_id,onboarding_completed_at").eq("id", id).maybeSingle(),
+  all: () => cfLoadAll("staff", "id,full_name,email,phone,role,status,supervisor_id,created_at", ["status","full_name","id"]),
+  names: () => cfLoadAll("staff", "id,full_name", "id"),
+  namesList: async () => (await cfFetchAll("staff", "id,full_name", "full_name")),
+  namesIn: ids => sb.from("staff").select("id,full_name").in("id", ids),
+  everyone: () => sb.from("staff").select("id,full_name"),
+  activeAgents: () => sb.from("staff").select("id,full_name").eq("role", "agent").eq("status", "active").order("full_name"),
+  adminUpdate: (id, status, role, supervisorId) => sb.rpc("admin_update_staff", { p_staff_id: id, p_status: status, p_role: role, p_supervisor_id: supervisorId || null }),
+  completeOnboarding: () => sb.rpc("complete_agent_onboarding")
+};
+
+;
+/* ===== models/products.js ===== */
+/* MODEL: the product catalogue and product photos. */
+const Products = {
+  all: () => cfLoadAll("products", "id,name,price,image_url,in_stock", ["name", "id"]),
+  allForBulk: () => cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]),
+  inStock: () => cfRead("reg:products", () => sb.from("products").select("id,name,price").eq("in_stock", true).order("name")),
+  save: (row, id) => id ? sb.from("products").update(row).eq("id", id) : sb.from("products").insert(row),
+  insertMany: rows => sb.from("products").insert(rows),
+  insertOne: row => sb.from("products").insert(row),
+  update: (id, patch) => sb.from("products").update(patch).eq("id", id),
+  uploadPhoto: (path, file, type) => sb.storage.from("product-images").upload(path, file, { contentType: type }),
+  photoUrl: path => sb.storage.from("product-images").getPublicUrl(path).data.publicUrl
+};
+
+;
+/* ===== models/plans.js ===== */
+/* MODEL: payment plans (daily, weekly ...). */
+const Plans = {
+  all: () => cfRead("reg:plans", () => sb.from("payment_plans").select("id,name,frequency,installments").order("id"))
+};
+
+;
+/* ===== models/customers.js ===== */
+/* MODEL: customers. */
+const Customers = {
+  all: () => cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]),
+  registeredBetween: (from, to) => sb.from("customers").select("id,full_name,phone,location,registered_by,created_at").gte("created_at", from + "T00:00:00").lte("created_at", to + "T23:59:59.999").order("created_at", { ascending: false }).limit(200),
+  register: (args, submissionId) => sb.rpc("register_customer", { ...args, p_submission_id: submissionId }),
+  exportAll: () => cfFetchAll("customers", "id,full_name,phone,location,registered_by,created_at", "id")
+};
+
+;
+/* ===== models/payments.js ===== */
+/* MODEL: payments: recording, reviewing, reversing and listing. */
+const Payments = {
+  record: (row, withOfflineId) => sb.from("payments").insert(withOfflineId ? row : { purchase_id: row.purchase_id, amount: row.amount, paid_on: row.paid_on, collected_by: row.collected_by }).select("id").maybeSingle(),
+  insertRaw: payload => sb.from("payments").insert(payload),
+  findByOfflineId: id => sb.from("payments").select("id").eq("offline_submission_id", id).maybeSingle(),
+  duplicateToday: (customerId, productId) => sb.rpc("check_recent_payment_duplicate", { p_customer_id: customerId, p_product_id: productId }),
+  mineSince: (agentId, since) => sb.from("payments").select("purchase_id,created_at").eq("collected_by", agentId).gte("created_at", since).is("voided_at", null),
+  forStatement: (customerId, ids) => cfRead("stmtp:" + customerId, () => sb.from("payments").select("id,purchase_id,amount,paid_on,created_at,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true })),
+  recent: () => sb.from("payments").select("id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason").order("created_at", { ascending: false }).limit(150),
+  auditLog: () => sb.from("payment_audit_log").select("*").order("event_at", { ascending: false }).limit(150),
+  reverse: (paymentId, reason) => sb.rpc("void_payment", { p_payment_id: paymentId, p_reason: reason }),
+  between: (from, to) => cfLoadAll("payments", "id,amount,paid_on,collected_by", ["paid_on", "id"], q => q.gte("paid_on", from).lte("paid_on", to).is("voided_at", null)),
+  exportAll: () => cfFetchAll("payments", "id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason", "id"),
+  sendSms: paymentId => sb.functions.invoke("send-payment-sms", { body: { payment_id: paymentId } })
+};
+
+;
+/* ===== models/purchases.js ===== */
+/* MODEL: purchases and what is still owed (the purchase_ledger view). */
+const Purchases = {
+  active: () => cfLoadAll("purchase_ledger", "purchase_id,customer_id,customer_name,customer_phone,product_id,product_name,plan_name,total_price,installment_amount,amount_paid,balance,payments_made,status", ["customer_name", "purchase_id"], q => q.eq("status", "active")),
+  forCustomer: customerId => cfRead("stmt:" + customerId, () => sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", customerId).order("created_at", { ascending: false })),
+  historyFor: ids => sb.from("purchase_ledger").select("purchase_id,customer_id,product_id").in("purchase_id", ids),
+  forReview: () => cfLoadAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name,agent_name", "purchase_id"),
+  exportPaymentsLedger: () => cfFetchAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name,total_price", "purchase_id"),
+  exportAll: () => cfFetchAll("purchase_ledger", "*", "purchase_id")
+};
+
+;
+/* ===== models/summary.js ===== */
+/* MODEL: totals for the Collections and Analytics pages. */
+const Summary = {
+  collections: (from, to) => sb.rpc("collection_summary", { p_from: from, p_to: to }),
+  portfolio: () => sb.rpc("portfolio_summary")
+};
+
+;
+/* ===== models/announcements.js ===== */
+/* MODEL: announcements, read receipts and phone-notification subscriptions. */
+const Announcements = {
+  listMine: () => cfRead("notices", () => sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(40)),
+  myReads: staffId => cfRead("notice-reads", () => sb.from("announcement_reads").select("announcement_id").eq("staff_id", staffId)),
+  listSent: () => sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(30),
+  allReads: () => sb.from("announcement_reads").select("announcement_id,staff_id"),
+  send: row => sb.from("announcements").insert(row).select("id").maybeSingle(),
+  archive: id => sb.from("announcements").update({ archived_at: new Date().toISOString() }).eq("id", id),
+  markRead: (ids, staffId) => sb.from("announcement_reads").upsert(ids.map(id => ({ announcement_id: id, staff_id: staffId })), { onConflict: "announcement_id,staff_id", ignoreDuplicates: true }),
+  pushKey: () => sb.functions.invoke("push", { body: { action: "key" } }),
+  pushSend: id => sb.functions.invoke("push", { body: { action: "send", announcement_id: id } }),
+  saveSubscription: (endpoint, p256dh, auth, userAgent) => sb.rpc("save_push_subscription", { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth, p_user_agent: userAgent }),
+  removeSubscription: endpoint => sb.rpc("remove_push_subscription", { p_endpoint: endpoint })
+};
+
+;
 /* ===== models/offline.js ===== */
 /* MODEL: phone storage (IndexedDB), the offline queue and syncing it when the network returns. */
 const cfDBName="creditflex-offline-v1",cfStore="pending-payments";
@@ -211,7 +327,7 @@ async function cfSyncInner(){
   if(row.kind==="register"){
    if(row.owner!==S.me.id||row.status==="needs-attention")continue;
    try{
-    const r=await sb.rpc("register_customer",{p_full_name:row.p_full_name,p_phone:row.p_phone,p_location:row.p_location,p_product_id:row.p_product_id,p_plan_id:row.p_plan_id,p_submission_id:row.id});
+    const r=await Customers.register({p_full_name:row.p_full_name,p_phone:row.p_phone,p_location:row.p_location,p_product_id:row.p_product_id,p_plan_id:row.p_plan_id},row.id);
     if(!r.error){await cfDelete(row.id);continue;}
     const m=String(r.error.message||"");
     if(/failed to fetch|network|load failed|timeout|connection/i.test(m))break;
@@ -221,14 +337,14 @@ async function cfSyncInner(){
   }
   if(row.collected_by!==S.me.id)continue;
   try{
-   const existing=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
+   const existing=await Payments.findByOfflineId(row.id);
    if(existing.data){await cfDelete(row.id);continue;}
    const payload={purchase_id:row.purchase_id,amount:row.amount,paid_on:row.paid_on,collected_by:row.collected_by,offline_submission_id:row.id};
-   const result=await sb.from("payments").insert(payload);
+   const result=await Payments.insertRaw(payload);
    if(!result.error){await cfDelete(row.id);continue;}
    const msg=String(result.error.message||"");
    if(/duplicate key|unique constraint/i.test(msg)){
-    const check=await sb.from("payments").select("id").eq("offline_submission_id",row.id).maybeSingle();
+    const check=await Payments.findByOfflineId(row.id);
     if(check.data){await cfDelete(row.id);continue;}
    }
    if(/failed to fetch|network|load failed|timeout|connection/i.test(msg))break;
@@ -395,7 +511,7 @@ function renderLogin(note) {
     const email = $("em").value.trim();
     if (!email) return say("authMsg", "Type your email above first, then tap Forgot password.");
     const b = $("fp"); busy(b, true);
-    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    const { error } = await Auth.sendResetLink(email, location.origin + location.pathname);
     busy(b, false);
     if (error) return say("authMsg", error.message);
     say("authMsg", "If that email has an account, a reset link is on its way. Open it on this phone.", true);
@@ -407,13 +523,13 @@ function renderLogin(note) {
     if (S.signup) {
       const pwIssue = cfPwIssue(password);
       if (pwIssue) { busy(b, false); return say("authMsg", pwIssue); }
-      const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: $("fn").value.trim(), phone: $("ph").value.trim() } } });
+      const { error } = await Auth.signUp(email, password, $("fn").value.trim(), $("ph").value.trim());
       busy(b, false);
       if (error) return say("authMsg", error.message);
       S.signup = false;
       return renderLogin("Account created. Ask an admin to approve it, then sign in.");
     }
-    const { error } = await sb.auth.signInWithPassword({ email, password });
+    const { error } = await Auth.signIn(email, password);
     busy(b, false);
     if (error) return say("authMsg", error.message);
     await loadMe();
@@ -435,7 +551,7 @@ function renderNewPassword() {
     if ($("np1").value !== $("np2").value) return say("npMsg", "The two passwords do not match.");
     { const pwIssue = cfPwIssue($("np1").value); if (pwIssue) return say("npMsg", pwIssue); }
     const b = $("npBtn"); busy(b, true);
-    const { error } = await sb.auth.updateUser({ password: $("np1").value });
+    const { error } = await Auth.setPassword($("np1").value);
     busy(b, false);
     if (error) return say("npMsg", error.message);
     S.recovery = false; history.replaceState(null, "", location.pathname);
@@ -460,23 +576,23 @@ function renderBlocked() {
 /* ===== controllers/session.js ===== */
 /* CONTROLLER: start-up, loading the signed-in person, sign-out. */
 async function boot() {
-  const { data: { session } } = await sb.auth.getSession();
+  const { data: { session } } = await Auth.getSession();
   if (!session) { let m; try { m = HASHERR ? decodeURIComponent(HASHERR) + ". Tap Forgot password to get a new link." : undefined; } catch (e) {} if (HASHERR) history.replaceState(null, "", location.pathname); return renderLogin(m); }
   if (S.recovery) return renderNewPassword();
   await loadMe();
 }
 async function loadMe() {
-  const { data: { user } } = await sb.auth.getUser();
+  const { data: { user } } = await Auth.getUser();
   if (!user) return renderLogin();
-  const { data, error } = await sb.from("staff").select("id,full_name,email,phone,role,status,supervisor_id,onboarding_completed_at").eq("id", user.id).maybeSingle();
-  if (error || !data) { await sb.auth.signOut(); return renderLogin("Could not load your staff account."); }
+  const { data, error } = await Staff.me(user.id);
+  if (error || !data) { await Auth.signOut(); return renderLogin("Could not load your staff account."); }
   S.me = data;
   if (data.status !== "active") return renderBlocked();
   renderShell();
   if (data.role === "agent" && !data.onboarding_completed_at) setTimeout(() => startCreditflexTour(), 450);
   setTimeout(() => syncCreditflexOfflineQueue(), 700);
 }
-async function logout(note) { try { if (window.cfPushSignOutCleanup) await cfPushSignOutCleanup(); } catch (e) {} try { await sb.auth.signOut(); } catch (e) {} S.me = null; if (window.cfIdleStop) cfIdleStop(); renderLogin(typeof note === "string" ? note : undefined); }
+async function logout(note) { try { if (window.cfPushSignOutCleanup) await cfPushSignOutCleanup(); } catch (e) {} try { await Auth.signOut(); } catch (e) {} S.me = null; if (window.cfIdleStop) cfIdleStop(); renderLogin(typeof note === "string" ? note : undefined); }
 
 /* ---------- auth screens ---------- */
 
@@ -498,7 +614,7 @@ async function viewCollections() {
   const load = async () => {
     const f = $("df").value, t = $("dt").value;
     $("out").innerHTML = loading;
-    const { data, error } = await sb.rpc("collection_summary", { p_from: f, p_to: t });
+    const { data, error } = await Summary.collections(f, t);
     if (error) { $("out").innerHTML = ""; return say("cm", cfErr(error)); }
     exportRows=data||[];
     say("cm", "");
@@ -518,8 +634,8 @@ async function viewCollections() {
     const f = $("df").value, t = $("dt").value;
     $("nc").innerHTML = "";
     const [c, st] = await Promise.all([
-      sb.from("customers").select("id,full_name,phone,location,registered_by,created_at").gte("created_at", f + "T00:00:00").lte("created_at", t + "T23:59:59.999").order("created_at", { ascending: false }).limit(200),
-      sb.from("staff").select("id,full_name")
+      Customers.registeredBetween(f, t),
+      Staff.everyone()
     ]);
     if (c.error || !c.data) return;
     const names = {}; (st.data || []).forEach(x => names[x.id] = x.full_name);
@@ -531,7 +647,7 @@ async function viewCollections() {
   $("go").onclick = () => { load(); loadNew(); };
   $("csv").onclick=()=>{if(!exportRows.length)return say("cm","There are no collection rows to export for this date range.");const cell=v=>{let s=String(v??"");if(/^[=+\-@\t\r]/.test(s))s="'"+s;return '"' + s.replace(/"/g,'""') + '"';};const lines=[["Date","Agent","Payments","Total (GHS)"],...exportRows.map(r=>[r.paid_on,r.agent_name,r.payments_count,r.total])].map(row=>row.map(cell).join(",")).join("\r\n");const url=URL.createObjectURL(new Blob(["\ufeff"+lines],{type:"text/csv;charset=utf-8;"}));const a=document.createElement("a");a.href=url;a.download="creditflex-collections-"+$("df").value+"-to-"+$("dt").value+".csv";a.click();URL.revokeObjectURL(url);};
   load(); loadNew();
-  const { data: port } = await sb.rpc("portfolio_summary");
+  const { data: port } = await Summary.portfolio();
   if (port && port.length) {
     const out = port.reduce((a, r) => a + Number(r.outstanding), 0);
     $("port").innerHTML = `<section class="${C.card}"><h2 class="text-title-md mb-3">Money still owed</h2>
@@ -570,14 +686,14 @@ async function viewPay() {
     <section id="list" class="space-y-2">${loading}</section><div id="form"></div>`;
   let data=[], cfRecent=[];
   if(navigator.onLine){
-    const result=await cfLoadAll("purchase_ledger","purchase_id,customer_id,customer_name,customer_phone,product_id,product_name,plan_name,total_price,installment_amount,amount_paid,balance,payments_made,status",["customer_name","purchase_id"],q=>q.eq("status","active"));
+    const result=await Purchases.active();
     if(!result.error){data=result.data||[];try{await cfCacheLedger(data);}catch(e){console.warn("Could not cache purchase list",e);}}
     else {const cached=await cfCachedLedger().catch(()=>null);if(cached&&Array.isArray(cached.rows)){data=cached.rows.filter(x=>x.status==="active");say("top","Live data could not be reached. Showing the last saved customer list from this device.",false);}else return $("list").innerHTML='<div class="bg-error-container rounded-xl p-4">Could not load purchases. Connect to the internet and try again.</div>';}
     try{
       const since=new Date(new Date().setHours(0,0,0,0)).toISOString();
-      const paysRes=await sb.from("payments").select("purchase_id,created_at").eq("collected_by",S.me.id).gte("created_at",since).is("voided_at",null);
+      const paysRes=await Payments.mineSince(S.me.id,since);
       const ids=[...new Set((paysRes.data||[]).map(p=>p.purchase_id))];let histRows=[],histErr=null;
-      for(let i=0;i<ids.length&&!histErr;i+=80){const h=await sb.from("purchase_ledger").select("purchase_id,customer_id,product_id").in("purchase_id",ids.slice(i,i+80));if(h.error)histErr=h.error;else histRows=histRows.concat(h.data||[]);}
+      for(let i=0;i<ids.length&&!histErr;i+=80){const h=await Purchases.historyFor(ids.slice(i,i+80));if(h.error)histErr=h.error;else histRows=histRows.concat(h.data||[]);}
       const hist={data:histRows,error:histErr},pays=paysRes;
       if(!hist.error&&!pays.error){const map=new Map((hist.data||[]).map(x=>[String(x.purchase_id),x]));cfRecent=(pays.data||[]).map(p=>({...map.get(String(p.purchase_id)),created_at:p.created_at})).filter(x=>x.customer_id&&x.product_id);await cfCacheRecent(cfRecent);}
       else {const cached=await cfCachedRecent().catch(()=>null);cfRecent=cached?.rows||[];}
@@ -635,7 +751,7 @@ async function viewPay() {
         ${S.me.role==="admin"?`<div><label class="${C.lbl}" for="pd">Date</label><input id="pd" type="date" class="${C.inp}" value="${today()}" required></div>`:`<p class="text-label-md text-on-surface-variant flex items-center gap-1.5">${ic("event","text-[18px]")}Recorded as today, ${esc(today())}</p>`}
         <button class="${C.btn}" id="pb">${ic("verified", "fill text-[24px]")}<span>Save payment</span></button>
       </form><div id="pm"></div></section>`;
-    (async () => { let d = false; try { if (navigator.onLine) { const x = await sb.rpc("check_recent_payment_duplicate", { p_customer_id: r.customer_id, p_product_id: r.product_id }); d = !x.error && x.data === true; } else d = cfIsRecentDuplicate(r, cfRecent) || await cfHasQueuedDuplicate(r); } catch (e) {}
+    (async () => { let d = false; try { if (navigator.onLine) { const x = await Payments.duplicateToday(r.customer_id, r.product_id); d = !x.error && x.data === true; } else d = cfIsRecentDuplicate(r, cfRecent) || await cfHasQueuedDuplicate(r); } catch (e) {}
       const el = $("dup"); if (d && el && S.selPurchase === r.purchase_id) el.innerHTML = `<div class="bg-tertiary-fixed text-on-tertiary-fixed rounded-xl p-3 flex items-start gap-2">${ic("error", "fill text-[22px] shrink-0")}<span class="text-label-lg flex-1">Already paid today: a payment for this customer and item was recorded earlier today. Check before saving another.</span></div>`; })();
     $("form").scrollIntoView({ behavior: "smooth" });
     $("cInst").onclick = () => { $("amt").value = def; };
@@ -654,13 +770,13 @@ async function viewPay() {
         say("top", "Payment queued on this phone. It is NOT yet recorded on the server. It will sync when internet returns.", true);
         return;
       }
-      const duplicateCheck=await sb.rpc("check_recent_payment_duplicate",{p_customer_id:r.customer_id,p_product_id:r.product_id});
+      const duplicateCheck=await Payments.duplicateToday(r.customer_id,r.product_id);
       if(duplicateCheck.error){busy(b,false);return say("pm",cfErr(duplicateCheck.error));}
       if(duplicateCheck.data&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
       const offlineId = cfUuid();
-      let { data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId }).select("id").maybeSingle();
+      let { data: saved, error } = await Payments.record({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId }, true);
       if (error && /offline_submission_id|column/i.test(error.message || "")) {
-        ({ data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }).select("id").maybeSingle());
+        ({ data: saved, error } = await Payments.record({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }, false));
       }
       busy(b, false);
       if (error) {
@@ -694,7 +810,7 @@ function cfSmsButton(paymentId, who) {
   $("sms-btn").onclick = async () => {
     const b = $("sms-btn"); busy(b, true);
     let res;
-    try { const r = await sb.functions.invoke("send-payment-sms", { body: { payment_id: paymentId } }); res = r.data; if (r.error) { try { res = await r.error.context.json(); } catch (e) { res = { ok: false, message: cfErr(r.error) }; } } }
+    try { const r = await Payments.sendSms(paymentId); res = r.data; if (r.error) { try { res = await r.error.context.json(); } catch (e) { res = { ok: false, message: cfErr(r.error) }; } } }
     catch (e) { res = { ok: false, message: cfErr(e) }; }
     busy(b, false);
     const ok = res && res.ok;
@@ -721,8 +837,8 @@ async function cfRegisterForm() {
   const v = $("cbody");
   v.innerHTML = `<h1 class="${C.h1}">New customer</h1>${loading}`;
   const [{ data: prods }, { data: plans }] = await Promise.all([
-    cfRead("reg:products", () => sb.from("products").select("id,name,price").eq("in_stock", true).order("name")),
-    cfRead("reg:plans", () => sb.from("payment_plans").select("id,name,frequency,installments").order("id"))
+    Products.inStock(),
+    Plans.all()
   ]);
   if (!prods || !prods.length) return v.innerHTML = `<h1 class="${C.h1}">New customer</h1><div class="bg-surface-container-low rounded-xl p-5 text-center"><div class="w-12 h-12 mx-auto rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center">${ic("inventory_2", "text-[26px]")}</div><p class="${C.mute} mt-2">No products are in stock yet. An admin needs to add products in the Catalogue tab first.</p></div>`;
   v.innerHTML = `<h1 class="${C.h1}">Register a new customer</h1>
@@ -746,7 +862,7 @@ async function cfRegisterForm() {
     const subId = cfUuid();
     const keep = async () => { const pr = prods.find(x => x.id == args.p_product_id); const ok = await queueCreditflexRegistration({ id: subId, ...args, product_label: pr ? pr.name : "" }); busy(b, false); if (ok) { $("rf").reset(); preview(); say("rm", "No internet. Customer saved on this phone and will be registered when you are online. Record their payments after that.", true); } else say("rm", "Could not save on this phone. Try again when online."); };
     if (!navigator.onLine) return keep();
-    const { error } = await sb.rpc("register_customer", { ...args, p_submission_id: subId });
+    const { error } = await Customers.register(args, subId);
     if (error && /failed to fetch|network|load failed|timeout|connection|fetch/i.test(String(error.message || ""))) return keep();
     busy(b, false);
     if (error) return say("rm", cfErr(error));
@@ -759,7 +875,7 @@ async function cfRegisterForm() {
 async function cfStatements() {
   const v = $("cbody");
   v.innerHTML = loading;
-  const { data, error, stale } = await cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]);
+  const { data, error, stale } = await Customers.all();
   if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const all = data || [];
   v.innerHTML = cfStaleNote(stale) + `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
@@ -775,12 +891,12 @@ async function cfStatements() {
 }
 async function cfStatement(c) {
   const box = $("sbox"); box.innerHTML = loading; box.scrollIntoView({ behavior: "smooth", block: "start" });
-  const led = await cfRead("stmt:" + c.id, () => sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", c.id).order("created_at", { ascending: false }));
+  const led = await Purchases.forCustomer(c.id);
   if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(led.error))}</div>`;
   const purchases = led.data || [], ids = purchases.map(x => x.purchase_id);
   let pays = [];
   if (ids.length) {
-    const r = await cfRead("stmtp:" + c.id, () => sb.from("payments").select("id,purchase_id,amount,paid_on,created_at,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true }));
+    const r = await Payments.forStatement(c.id, ids);
     if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(r.error))}</div>`;
     pays = r.data || [];
   }
@@ -807,7 +923,7 @@ async function cfStatement(c) {
 async function viewCatalogue() {
   const v = $("view"), admin = S.me.role === "admin";
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>${loading}`;
-  const { data, error } = await cfLoadAll("products", "id,name,price,image_url,in_stock", ["name", "id"]);
+  const { data, error } = await Products.all();
   if (error) return v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>
     ${admin ? `<section class="${C.card}"><div class="grid grid-cols-2 gap-2"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><button class="${C.btn} !bg-secondary-container !text-on-secondary-container !shadow-none" id="addmany" type="button">${ic("photo_library", "text-[20px]")}<span>Add many</span></button></div><div id="pf"></div></section>` : ""}
@@ -831,12 +947,12 @@ async function viewCatalogue() {
       if (file) {
         if (file.size > 2097152) { busy(b, false); return say("fm", "Photo is bigger than 2 MB."); }
         const path = `${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, "_")}`;
-        const up = await sb.storage.from("product-images").upload(path, file, { contentType: file.type });
+        const up = await Products.uploadPhoto(path, file, file.type);
         if (up.error) { busy(b, false); return say("fm", cfErr(up.error)); }
-        image_url = sb.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+        image_url = Products.photoUrl(path);
       }
       const row = { name: $("pn").value.trim(), price: Number($("pp").value), in_stock: $("ps").checked, image_url };
-      const { error } = p ? await sb.from("products").update(row).eq("id", p.id) : await sb.from("products").insert(row);
+      const { error } = await Products.save(row, p && p.id);
       busy(b, false);
       if (error) return say("fm", cfErr(error));
       viewCatalogue();
@@ -855,7 +971,7 @@ async function viewCatalogue() {
 async function viewStaff() {
   const v = $("view");
   v.innerHTML = `<h1 class="${C.h1}">Staff</h1>${loading}`;
-  const { data: raw, error } = await cfLoadAll("staff", "id,full_name,email,phone,role,status,supervisor_id,created_at", ["status","full_name","id"]);
+  const { data: raw, error } = await Staff.all();
   if (error) return v.innerHTML = `<h1 class="${C.h1}">Staff</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const rank = { pending: 0, active: 1, disabled: 2 };
   const data = [...raw].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
@@ -877,14 +993,14 @@ async function viewStaff() {
     const s = data.find(x => x.id === el.dataset.s);
     el.querySelector(".st").value = s.status; el.querySelector(".ro").value = s.role; el.querySelector(".su").value = s.supervisor_id || "";
     el.querySelector(".sv").onclick = async () => {
-      const { error } = await sb.rpc("admin_update_staff", { p_staff_id: s.id, p_status: el.querySelector(".st").value, p_role: el.querySelector(".ro").value, p_supervisor_id: el.querySelector(".su").value || null });
+      const { error } = await Staff.adminUpdate(s.id, el.querySelector(".st").value, el.querySelector(".ro").value, el.querySelector(".su").value || null);
       say("sm", error ? cfErr(error) : `${s.full_name} updated.`, !error);
       if (!error) window.scrollTo({ top: 0, behavior: "smooth" });
     };
   });
 }
 
-sb.auth.onAuthStateChange(ev => { if (ev === "SIGNED_OUT") { S.me = null; } if (ev === "PASSWORD_RECOVERY") { S.recovery = true; renderNewPassword(); } });
+Auth.onChange(ev => { if (ev === "SIGNED_OUT") { S.me = null; } if (ev === "PASSWORD_RECOVERY") { S.recovery = true; renderNewPassword(); } });
 
 ;
 /* ===== controllers/tour.js ===== */
@@ -906,7 +1022,7 @@ let cfStep=0,cfActive=cfSteps;
 let cfWatch=null,cfHlTimer=null,cfMin=false;
 function cfClearCoach(){const m=document.getElementById("cf-tour");if(m)m.remove();if(cfWatch){document.removeEventListener(cfWatch.ev,cfWatch.fn,true);cfWatch=null;}if(cfHlTimer){clearInterval(cfHlTimer);cfHlTimer=null;}document.querySelectorAll(".cf-hl").forEach(e=>e.classList.remove("cf-hl"));document.body.classList.remove("cf-coaching");}
 function cfModal(){cfClearCoach();const m=document.createElement("div");m.id="cf-tour";m.className="cf-coach";m.innerHTML='<section class="cf-coach-card" role="region" aria-label="Guided tour"><div class="cf-coach-top"><span id="cf-tour-count"></span><span><button id="cf-tour-min" type="button" aria-label="Hide or show tips">Hide</button><button id="cf-tour-all" type="button">Skip training</button></span></div><h2 id="cf-tour-title"></h2><div id="cf-coach-more"><p id="cf-tour-body"></p><p id="cf-tour-task"></p></div><div class="cf-tour-track"><div id="cf-tour-progress"></div></div><div class="cf-tour-actions"><button id="cf-tour-back" type="button">Back</button><button id="cf-tour-next" type="button">Next</button></div></section>';document.body.appendChild(m);document.body.classList.add("cf-coaching");return m;}
-async function cfFinishTour(){cfClearCoach();try{const {error}=await sb.rpc("complete_agent_onboarding");if(error)console.warn("Could not save onboarding completion",error.message);else if(S.me)S.me.onboarding_completed_at=new Date().toISOString();}catch(e){console.warn(e);}go("collections");}
+async function cfFinishTour(){cfClearCoach();try{const {error}=await Staff.completeOnboarding();if(error)console.warn("Could not save onboarding completion",error.message);else if(S.me)S.me.onboarding_completed_at=new Date().toISOString();}catch(e){console.warn(e);}go("collections");}
 function cfShowStep(){
  const s=cfActive[cfStep];
  if(S.tab!==s.target||s.pre){if(s.pre)s.pre();go(s.target);}
@@ -963,7 +1079,7 @@ window.viewCreditflexLearn=function(){
 /* CONTROLLER: Analytics page. */
 window.viewCreditflexAnalytics=async function(){
  const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Analytics</h1><section class="'+C.card+' space-y-3"><div class="grid grid-cols-2 gap-3"><div><label class="'+C.lbl+'">From</label><input id="cfa" type="date" class="'+C.inp+'" value="'+today()+'"></div><div><label class="'+C.lbl+'">To</label><input id="cfb" type="date" class="'+C.inp+'" value="'+today()+'"></div></div><div class="flex gap-2 flex-wrap" id="cf-chips"><button type="button" data-r="0" class="'+C.btn2+'">Today</button><button type="button" data-r="6" class="'+C.btn2+'">7 days</button><button type="button" data-r="29" class="'+C.btn2+'">30 days</button><button type="button" data-r="m" class="'+C.btn2+'">This month</button></div><button id="cf-run" class="'+C.btn+'">Refresh analytics</button><div id="cf-analytics-msg"></div></section><div id="cf-analytics-out">'+loading+'</div>';
- async function load(){const out=$("cf-analytics-out");out.innerHTML=loading;const {data,error}=await cfLoadAll("payments","id,amount,paid_on,collected_by",["paid_on","id"],q=>q.gte("paid_on",$("cfa").value).lte("paid_on",$("cfb").value).is("voided_at",null));if(error){out.innerHTML='<div class="bg-error-container rounded-xl p-4">'+esc(cfErr(error))+'</div>';return;}const rows=data||[],total=rows.reduce((n,p)=>n+Number(p.amount||0),0),byDay={};rows.forEach(p=>byDay[p.paid_on]=(byDay[p.paid_on]||0)+Number(p.amount||0));const days=Object.entries(byDay).sort((a,b)=>a[0].localeCompare(b[0]));const max=Math.max(1,...days.map(x=>x[1]));let names={};try{const ids=[...new Set(rows.map(x=>x.collected_by).filter(Boolean))];if(ids.length){const staff=await sb.from("staff").select("id,full_name").in("id",ids);(staff.data||[]).forEach(s=>names[s.id]=s.full_name);}}catch(e){}const byAgent={};rows.forEach(p=>{const k=p.collected_by||"unknown";byAgent[k]=(byAgent[k]||0)+Number(p.amount||0);});const queued=await cfAll().catch(()=>[]);let owed=0;try{const pr=await sb.rpc("portfolio_summary");owed=(pr.data||[]).reduce((n,x)=>n+Number(x.outstanding||0),0);}catch(e){}const topE=Object.entries(byAgent).sort((a,b)=>b[1]-a[1])[0];const topName=topE?(names[topE[0]]||(topE[0]===S.me.id?S.me.full_name:"Agent")):"-";out.innerHTML='<section class="grid grid-cols-2 gap-3"><article class="'+C.card+'"><div class="'+C.mute+'">Total collected</div><div class="text-2xl font-extrabold mt-1">'+money(total)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Payments recorded</div><div class="text-2xl font-extrabold mt-1">'+rows.length+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Average payment</div><div class="text-xl font-bold mt-1">'+money(rows.length?total/rows.length:0)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Waiting on this phone</div><div class="text-2xl font-extrabold mt-1">'+queued.length+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Still owed (all time)</div><div class="text-xl font-bold mt-1">'+money(owed)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Top agent</div><div class="text-xl font-bold mt-1">'+esc(topName)+'</div></article></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Daily collections</h2>'+(days.length?days.map(([d,n])=>'<div><div class="flex justify-between text-sm mb-1"><span>'+esc(d)+'</span><b>'+money(n)+'</b></div><div class="h-2 bg-surface-container-high rounded-full overflow-hidden"><div class="h-full bg-primary-container rounded-full" style="width:'+(n/max*100)+'%"></div></div></div>').join(""):'<p class="'+C.mute+'">No payments in this date range.</p>')+'</section><section class="'+C.card+' space-y-2"><h2 class="text-title-md">By agent</h2>'+Object.entries(byAgent).sort((a,b)=>b[1]-a[1]).map(([id,n])=>'<div class="flex justify-between gap-3 border-b border-slate-200 py-2"><span>'+esc(names[id]|| (id===S.me.id?S.me.full_name:"Agent"))+'</span><b>'+money(n)+'</b></div>').join("")+'</section>'; }
+ async function load(){const out=$("cf-analytics-out");out.innerHTML=loading;const {data,error}=await Payments.between($("cfa").value,$("cfb").value);if(error){out.innerHTML='<div class="bg-error-container rounded-xl p-4">'+esc(cfErr(error))+'</div>';return;}const rows=data||[],total=rows.reduce((n,p)=>n+Number(p.amount||0),0),byDay={};rows.forEach(p=>byDay[p.paid_on]=(byDay[p.paid_on]||0)+Number(p.amount||0));const days=Object.entries(byDay).sort((a,b)=>a[0].localeCompare(b[0]));const max=Math.max(1,...days.map(x=>x[1]));let names={};try{const ids=[...new Set(rows.map(x=>x.collected_by).filter(Boolean))];if(ids.length){const staff=await Staff.namesIn(ids);(staff.data||[]).forEach(s=>names[s.id]=s.full_name);}}catch(e){}const byAgent={};rows.forEach(p=>{const k=p.collected_by||"unknown";byAgent[k]=(byAgent[k]||0)+Number(p.amount||0);});const queued=await cfAll().catch(()=>[]);let owed=0;try{const pr=await Summary.portfolio();owed=(pr.data||[]).reduce((n,x)=>n+Number(x.outstanding||0),0);}catch(e){}const topE=Object.entries(byAgent).sort((a,b)=>b[1]-a[1])[0];const topName=topE?(names[topE[0]]||(topE[0]===S.me.id?S.me.full_name:"Agent")):"-";out.innerHTML='<section class="grid grid-cols-2 gap-3"><article class="'+C.card+'"><div class="'+C.mute+'">Total collected</div><div class="text-2xl font-extrabold mt-1">'+money(total)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Payments recorded</div><div class="text-2xl font-extrabold mt-1">'+rows.length+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Average payment</div><div class="text-xl font-bold mt-1">'+money(rows.length?total/rows.length:0)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Waiting on this phone</div><div class="text-2xl font-extrabold mt-1">'+queued.length+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Still owed (all time)</div><div class="text-xl font-bold mt-1">'+money(owed)+'</div></article><article class="'+C.card+'"><div class="'+C.mute+'">Top agent</div><div class="text-xl font-bold mt-1">'+esc(topName)+'</div></article></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Daily collections</h2>'+(days.length?days.map(([d,n])=>'<div><div class="flex justify-between text-sm mb-1"><span>'+esc(d)+'</span><b>'+money(n)+'</b></div><div class="h-2 bg-surface-container-high rounded-full overflow-hidden"><div class="h-full bg-primary-container rounded-full" style="width:'+(n/max*100)+'%"></div></div></div>').join(""):'<p class="'+C.mute+'">No payments in this date range.</p>')+'</section><section class="'+C.card+' space-y-2"><h2 class="text-title-md">By agent</h2>'+Object.entries(byAgent).sort((a,b)=>b[1]-a[1]).map(([id,n])=>'<div class="flex justify-between gap-3 border-b border-slate-200 py-2"><span>'+esc(names[id]|| (id===S.me.id?S.me.full_name:"Agent"))+'</span><b>'+money(n)+'</b></div>').join("")+'</section>'; }
  $("cf-chips").querySelectorAll("button").forEach(b=>b.onclick=()=>{const t=new Date(),f=new Date();if(b.dataset.r==="m")f.setDate(1);else f.setDate(t.getDate()-Number(b.dataset.r));$("cfa").value=f.toLocaleDateString("en-CA");$("cfb").value=t.toLocaleDateString("en-CA");load();});
  $("cf-run").onclick=load;load();
 };
@@ -1014,7 +1130,7 @@ const cfThemeCSS=document.createElement("style");cfThemeCSS.textContent='.cf-tou
 /* CONTROLLER: Account page. */
 window.viewCreditflexAccount=async function(){
  const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Account</h1><section class="'+C.card+' space-y-2"><div class="text-title-md">'+esc(S.me.full_name)+'</div><p class="'+C.mute+'">'+esc(S.me.email||"No email on file")+'</p><p class="'+C.mute+'">Role: '+esc(S.me.role)+'</p></section><section class="'+C.card+' space-y-3"><h2 class="text-title-md">Change password</h2><form id="cf-password-form" class="space-y-3"><div><label class="'+C.lbl+'" for="cf-current">Current password</label><input id="cf-current" type="password" autocomplete="current-password" class="'+C.inp+'" required></div><div><label class="'+C.lbl+'" for="cf-new">New password</label><input id="cf-new" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required><p class="'+C.mute+' mt-1">Use at least 8 characters with letters and numbers.</p></div><div><label class="'+C.lbl+'" for="cf-confirm">Confirm new password</label><input id="cf-confirm" type="password" autocomplete="new-password" minlength="8" class="'+C.inp+'" required></div><button id="cf-password-save" class="'+C.btn+'">Update password</button><div id="cf-password-msg"></div></form></section>';
- $("cf-password-form").onsubmit=async e=>{e.preventDefault();const b=$("cf-password-save"),current=$("cf-current").value,next=$("cf-new").value,confirmPass=$("cf-confirm").value;{const pwIssue=cfPwIssue(next);if(pwIssue)return say("cf-password-msg",pwIssue);}if(next!==confirmPass)return say("cf-password-msg","The new passwords do not match.");if(next===current)return say("cf-password-msg","Choose a password different from your current password.");busy(b,true);const auth=await sb.auth.signInWithPassword({email:S.me.email,password:current});if(auth.error){busy(b,false);return say("cf-password-msg","Current password could not be verified.");}const changed=await sb.auth.updateUser({password:next});busy(b,false);if(changed.error)return say("cf-password-msg",changed.error.message);$("cf-current").value="";$("cf-new").value="";$("cf-confirm").value="";say("cf-password-msg","Password updated successfully.",true);};
+ $("cf-password-form").onsubmit=async e=>{e.preventDefault();const b=$("cf-password-save"),current=$("cf-current").value,next=$("cf-new").value,confirmPass=$("cf-confirm").value;{const pwIssue=cfPwIssue(next);if(pwIssue)return say("cf-password-msg",pwIssue);}if(next!==confirmPass)return say("cf-password-msg","The new passwords do not match.");if(next===current)return say("cf-password-msg","Choose a password different from your current password.");busy(b,true);const auth=await Auth.signIn(S.me.email,current);if(auth.error){busy(b,false);return say("cf-password-msg","Current password could not be verified.");}const changed=await Auth.setPassword(next);busy(b,false);if(changed.error)return say("cf-password-msg",changed.error.message);$("cf-current").value="";$("cf-new").value="";$("cf-confirm").value="";say("cf-password-msg","Password updated successfully.",true);};
 };
 
 ;
@@ -1023,16 +1139,16 @@ window.viewCreditflexAccount=async function(){
 window.viewCreditflexFinancial=async function(){
  const v=$("view");v.innerHTML='<h1 class="'+C.h1+'">Financial review</h1><p class="'+C.mute+'">Admin-only payment review, reversals and audit history.</p><div id="cf-financial-list">'+loading+'</div>';
  const [pay,ledger,staff,audit]=await Promise.all([
-  sb.from("payments").select("id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason").order("created_at",{ascending:false}).limit(150),
-  cfLoadAll("purchase_ledger","purchase_id,customer_name,customer_phone,product_name,agent_name","purchase_id"),
-  cfLoadAll("staff","id,full_name","id"),
-  sb.from("payment_audit_log").select("*").order("event_at",{ascending:false}).limit(150)
+  Payments.recent(),
+  Purchases.forReview(),
+  Staff.names(),
+  Payments.auditLog()
  ]);
  if(pay.error){$("cf-financial-list").innerHTML='<div class="bg-error-container rounded-xl p-4">'+esc(cfErr(pay.error))+'</div>';return;}
  const purchases=new Map((ledger.data||[]).map(x=>[String(x.purchase_id),x])),people=new Map((staff.data||[]).map(x=>[x.id,x.full_name]));
  const rows=pay.data||[];
  $("cf-financial-list").innerHTML='<section class="'+C.card+' space-y-3"><div class="flex items-center justify-between gap-2"><h2 class="text-title-md">Recent payments</h2><span class="'+C.mute+'">'+rows.length+' shown</span></div>'+(rows.length?rows.map(p=>{const x=purchases.get(String(p.purchase_id))||{};return '<article class="border-b border-outline-variant/50 py-3 space-y-2"><div class="flex justify-between gap-3"><div class="min-w-0"><b>'+esc(x.customer_name||("Purchase #"+p.purchase_id))+'</b><p class="'+C.mute+'">'+esc(x.product_name||"")+' · '+esc(people.get(p.collected_by)||"Agent")+'</p><p class="'+C.mute+'">'+esc(p.paid_on)+' · '+esc(String(p.created_at||"").replace("T"," ").slice(0,16))+'</p></div><div class="text-right shrink-0"><b>'+money(p.amount)+'</b><p class="text-xs '+(p.voided_at?"text-red-600":"text-emerald-700")+'">'+(p.voided_at?"Reversed":"Recorded")+'</p></div></div>'+(p.voided_at?'<p class="text-sm text-red-700">Reason: '+esc(p.void_reason||"Not provided")+'</p>':'<button type="button" data-void="'+p.id+'" class="'+C.btn2+' w-full">Reverse payment</button>')+'</article>';}).join(""):'<p class="'+C.mute+'">No payments found.</p>')+'</section><section class="'+C.card+' mt-4 space-y-3"><h2 class="text-title-md">Financial audit trail</h2>'+(audit.error?'<p class="text-red-700">'+esc(audit.error.message)+'</p>':(audit.data||[]).length?(audit.data||[]).map(a=>'<article class="border-b border-outline-variant/50 py-2"><div class="flex justify-between gap-2"><b>'+esc(a.event_type)+'</b><span class="'+C.mute+'">Payment #'+esc(a.payment_id)+'</span></div><p class="'+C.mute+'">'+esc(people.get(a.actor_id)||"System")+' · '+esc(String(a.event_at||"").replace("T"," ").slice(0,16))+'</p><details class="mt-2"><summary class="text-sm underline">View recorded details</summary><pre class="text-xs whitespace-pre-wrap break-words mt-2">'+esc(JSON.stringify({old:a.old_payment,new:a.new_payment},null,2))+'</pre></details></article>').join(""):'<p class="'+C.mute+'">No audit entries found.</p>')+'</section>';
- document.querySelectorAll("[data-void]").forEach(btn=>btn.onclick=async()=>{const reason=prompt("Enter the reason for reversing this payment (at least 8 characters):");if(reason===null)return;if(reason.trim().length<8)return alert("The reason must be at least 8 characters.");if(!confirm("Reverse this payment? The action will be recorded in the financial audit trail."))return;btn.disabled=true;const result=await sb.rpc("void_payment",{p_payment_id:Number(btn.dataset.void),p_reason:reason.trim()});if(result.error){btn.disabled=false;return alert(result.error.message);}await viewCreditflexFinancial();});
+ document.querySelectorAll("[data-void]").forEach(btn=>btn.onclick=async()=>{const reason=prompt("Enter the reason for reversing this payment (at least 8 characters):");if(reason===null)return;if(reason.trim().length<8)return alert("The reason must be at least 8 characters.");if(!confirm("Reverse this payment? The action will be recorded in the financial audit trail."))return;btn.disabled=true;const result=await Payments.reverse(Number(btn.dataset.void),reason.trim());if(result.error){btn.disabled=false;return alert(result.error.message);}await viewCreditflexFinancial();});
 };
 
 ;
@@ -1049,22 +1165,22 @@ window.viewCreditflexExport = async function () {
       <div class="grid grid-cols-1 gap-2"><button id="x-pay" class="${C.btn2}" type="button">Payments</button><button id="x-cus" class="${C.btn2}" type="button">Customers</button><button id="x-pur" class="${C.btn2}" type="button">Purchases and balances</button></div>
       <div id="x-msg"></div></section>`;
   const stamp = () => today();
-  const staffName = async () => { const m = {}; (await cfFetchAll("staff", "id,full_name", "full_name")).forEach(x => m[x.id] = x.full_name); return m; };
+  const staffName = async () => { const m = {}; (await Staff.namesList()).forEach(x => m[x.id] = x.full_name); return m; };
   const jobs = {
     async pay() {
-      const [pays, led, names] = await Promise.all([cfFetchAll("payments", "id,purchase_id,amount,paid_on,collected_by,created_at,voided_at,void_reason", "id"), cfFetchAll("purchase_ledger", "purchase_id,customer_name,customer_phone,product_name,total_price", "purchase_id"), staffName()]);
+      const [pays, led, names] = await Promise.all([Payments.exportAll(), Purchases.exportPaymentsLedger(), staffName()]);
       const L = {}; led.forEach(x => L[x.purchase_id] = x);
       const run = cfRunning(pays, k => (L[k] || {}).total_price);
       cfCsvDownload("creditflex-payments-" + stamp() + ".csv", [["Payment ID", "Date", "Amount (GHS)", "Customer", "Phone", "Product", "Price (GHS)", "Paid so far (GHS)", "Balance after this payment (GHS)", "Collected by", "Recorded at", "Cancelled", "Cancel reason"], ...pays.map(p => { const l = L[p.purchase_id] || {}; return [p.id, p.paid_on, p.amount, l.customer_name, l.customer_phone, l.product_name, l.total_price, (run.get(p.id) || {}).paid ?? "", (run.get(p.id) || {}).balance ?? "", names[p.collected_by] || "", p.created_at, p.voided_at ? "yes" : "no", p.void_reason || ""]; })]);
       return pays.length;
     },
     async cus() {
-      const [cs, names] = await Promise.all([cfFetchAll("customers", "id,full_name,phone,location,registered_by,created_at", "id"), staffName()]);
+      const [cs, names] = await Promise.all([Customers.exportAll(), staffName()]);
       cfCsvDownload("creditflex-customers-" + stamp() + ".csv", [["ID", "Name", "Phone", "Location", "Registered by", "Created"], ...cs.map(c => [c.id, c.full_name, c.phone, c.location, names[c.registered_by] || "", c.created_at])]);
       return cs.length;
     },
     async pur() {
-      const led = await cfFetchAll("purchase_ledger", "*", "purchase_id");
+      const led = await Purchases.exportAll();
       cfCsvDownload("creditflex-purchases-" + stamp() + ".csv", [["Purchase ID", "Customer", "Phone", "Product", "Plan", "Agent", "Total price", "Installment", "Paid", "Balance", "Payments made", "Start date", "Status"], ...led.map(x => [x.purchase_id, x.customer_name, x.customer_phone, x.product_name, x.plan_name, x.agent_name, x.total_price, x.installment_amount, x.amount_paid, x.balance, x.payments_made, x.start_date, x.status])]);
       return led.length;
     }
@@ -1175,7 +1291,7 @@ window.viewCreditflexBulk = async function () {
   const v = $("view");
   if (S.me.role !== "admin") { return go("collections"); }
   v.innerHTML = `<h1 class="${C.h1}">Add many products</h1>${loading}`;
-  const ex = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
+  const ex = await Products.allForBulk();
   if (ex.error) return v.innerHTML = `<h1 class="${C.h1}">Add many products</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(ex.error))}</div>`;
   const existing = new Map((ex.data || []).map(p => [norm(p.name), p]));
 
@@ -1314,8 +1430,8 @@ window.viewCreditflexBulk = async function () {
         while (queue.length) {
           const r = queue.shift();
           const path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "-" + (norm(r.name).slice(0, 30) || "product") + ".jpg";
-          const up = await sb.storage.from("product-images").upload(path, r.photo, { contentType: r.photo.type || "image/jpeg" });
-          if (up.error) { result.photosFailed++; r.url = null; } else r.url = sb.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+          const up = await Products.uploadPhoto(path, r.photo, r.photo.type || "image/jpeg");
+          if (up.error) { result.photosFailed++; r.url = null; } else r.url = Products.photoUrl(path);
           prog("Uploading photos… " + (++done) + " of " + withPhotos.length);
         }
       }));
@@ -1324,21 +1440,21 @@ window.viewCreditflexBulk = async function () {
       for (let i = 0; i < news.length; i += 50) {
         const chunk = news.slice(i, i + 50); prog("Saving products… " + Math.min(i + 50, news.length) + " of " + news.length);
         const payload = chunk.map(r => ({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null }));
-        const b = await sb.from("products").insert(payload);
+        const b = await Products.insertMany(payload);
         if (!b.error) { chunk.forEach(r => saved.add(r.id)); result.added += chunk.length; continue; }
         for (const r of chunk) {
-          const one = await sb.from("products").insert({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null });
+          const one = await Products.insertOne({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null });
           if (one.error) { r.err = cfErr(one.error); result.failed++; } else { saved.add(r.id); result.added++; }
         }
       }
       /* 3. updates to products that already exist */
       for (const r of upds) {
         const e = existing.get(norm(r.name)); const patch = { price: r.price, in_stock: r.in_stock }; if (r.url) patch.image_url = r.url;
-        const u = await sb.from("products").update(patch).eq("id", e.id);
+        const u = await Products.update(e.id, patch);
         if (u.error) { r.err = cfErr(u.error); result.failed++; } else { saved.add(r.id); result.updated++; }
       }
       rows = rows.filter(r => !saved.has(r.id));
-      const again = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
+      const again = await Products.allForBulk();
       if (!again.error) { existing.clear(); (again.data || []).forEach(p => existing.set(norm(p.name), p)); }
       const parts = []; if (result.added) parts.push(result.added + " added"); if (result.updated) parts.push(result.updated + " updated");
       let msg = (parts.join(", ") || "Nothing saved") + ".";
@@ -1362,8 +1478,8 @@ window.viewCreditflexBulk = async function () {
 const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return "just now"; if (m < 60) return m + " min ago"; const h = Math.round(m / 60); if (h < 24) return h + " h ago"; return new Date(iso).toLocaleDateString(); };
 
 async function loadNotices() {
-  const a = await cfRead("notices", () => sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(40));
-  const r = await cfRead("notice-reads", () => sb.from("announcement_reads").select("announcement_id").eq("staff_id", S.me.id));
+  const a = await Announcements.listMine();
+  const r = await Announcements.myReads(S.me.id);
   const seen = new Set((r.data || []).map(x => String(x.announcement_id)));
   return { list: a.data || [], seen, error: a.error, stale: a.stale };
 }
@@ -1389,19 +1505,19 @@ window.cfPushEnable = async function () {
   if (!pushSupported()) throw Error(isIOS && !standalone() ? "On iPhone, first tap Share, then Add to Home Screen, and open Creditflex from the new icon." : "This browser does not support notifications.");
   const perm = await Notification.requestPermission();
   if (perm !== "granted") throw Error("Notifications are blocked. Allow them in your phone or browser settings for this app.");
-  const k = await sb.functions.invoke("push", { body: { action: "key" } });
+  const k = await Announcements.pushKey();
   const key = k.data && k.data.key; if (!key) throw Error("Notifications are not ready yet. Try again in a minute.");
   const reg = await pushReg();
   let sub = await reg.pushManager.getSubscription();
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(key) });
   const j = sub.toJSON();
-  const { error } = await sb.rpc("save_push_subscription", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: navigator.userAgent });
+  const { error } = await Announcements.saveSubscription(j.endpoint, j.keys.p256dh, j.keys.auth, navigator.userAgent);
   if (error) throw error;
   try { localStorage.setItem("cf-push-on", "1"); } catch (e) {}
 };
 window.cfPushDisable = async function () {
   const sub = await pushCurrent();
-  if (sub) { try { await sb.rpc("remove_push_subscription", { p_endpoint: sub.endpoint }); } catch (e) {} try { await sub.unsubscribe(); } catch (e) {} }
+  if (sub) { try { await Announcements.removeSubscription(sub.endpoint); } catch (e) {} try { await sub.unsubscribe(); } catch (e) {} }
   try { localStorage.removeItem("cf-push-on"); } catch (e) {}
 };
 /* called when someone signs out so the next person on this phone does not receive their messages */
@@ -1425,7 +1541,7 @@ window.viewCreditflexInbox = async function () {
   v.innerHTML = `<h1 class="${C.h1}">Announcements</h1>${cfStaleNote(stale)}<section class="${C.card} space-y-2"><h2 class="text-title-md">Notifications</h2><div id="inbox-push"></div></section>` + (list.length ? list.map(x => { const fresh = !seen.has(String(x.id)); return `<section class="${C.card} space-y-1 ${fresh ? "border-l-4 border-primary" : ""}"><div class="flex items-start justify-between gap-2"><b class="text-body-lg">${esc(x.title)}</b>${fresh ? `<span class="text-label-md rounded-full px-2.5 py-0.5 bg-primary-fixed text-on-primary-fixed shrink-0">New</span>` : ""}</div><p class="text-body-md whitespace-pre-wrap break-words">${esc(x.body)}</p><p class="${C.mute}">${esc(ago(x.created_at))}${x.audience_agent_id ? " · just for you" : ""}</p></section>`; }).join("") : `<div class="${C.card} text-center ${C.mute}">No announcements yet.</div>`);
   cfPushSlot("inbox-push");
   const fresh = list.filter(x => !seen.has(String(x.id)));
-  if (fresh.length && navigator.onLine) { try { await sb.from("announcement_reads").upsert(fresh.map(x => ({ announcement_id: x.id, staff_id: S.me.id })), { onConflict: "announcement_id,staff_id", ignoreDuplicates: true }); } catch (e) {} const b = document.getElementById("bellBadge"); if (b) b.classList.add("hidden"); }
+  if (fresh.length && navigator.onLine) { try { await Announcements.markRead(fresh.map(x => x.id), S.me.id); } catch (e) {} const b = document.getElementById("bellBadge"); if (b) b.classList.add("hidden"); }
 };
 
 /* admin: write and manage announcements */
@@ -1433,9 +1549,9 @@ window.viewCreditflexAnnounce = async function () {
   if (S.me.role !== "admin") { return go("collections"); }
   const v = $("view"); v.innerHTML = `<h1 class="${C.h1}">Announcements</h1>${loading}`;
   const [ag, an, rd] = await Promise.all([
-    sb.from("staff").select("id,full_name").eq("role", "agent").eq("status", "active").order("full_name"),
-    sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(30),
-    sb.from("announcement_reads").select("announcement_id,staff_id")
+    Staff.activeAgents(),
+    Announcements.listSent(),
+    Announcements.allReads()
   ]);
   const agents = ag.data || [], list = an.data || [], reads = rd.data || [];
   const nameOf = id => (agents.find(a => a.id === id) || {}).full_name || "one agent";
@@ -1453,16 +1569,16 @@ window.viewCreditflexAnnounce = async function () {
   $("an-f").onsubmit = async e => {
     e.preventDefault(); const b = $("an-s"); busy(b, true);
     const row = { title: $("an-t").value.trim(), body: $("an-b").value.trim(), audience_agent_id: $("an-a").value || null, created_by: S.me.id };
-    const ins = await sb.from("announcements").insert(row).select("id").maybeSingle();
+    const ins = await Announcements.send(row);
     if (ins.error) { busy(b, false); return say("an-m", cfErr(ins.error)); }
     let note = "Announcement sent. Agents will see it when they open the app.";
-    try { const r = await sb.functions.invoke("push", { body: { action: "send", announcement_id: ins.data && ins.data.id } }); const d = r.data || {}; if (d.ok) note = d.devices ? "Announcement sent. Phone notification delivered to " + d.sent + " of " + d.devices + " phones." : "Announcement sent. No agent has turned on phone notifications yet, so they will see it when they open the app."; } catch (e) {}
+    try { const r = await Announcements.pushSend(ins.data && ins.data.id); const d = r.data || {}; if (d.ok) note = d.devices ? "Announcement sent. Phone notification delivered to " + d.sent + " of " + d.devices + " phones." : "Announcement sent. No agent has turned on phone notifications yet, so they will see it when they open the app."; } catch (e) {}
     busy(b, false);
     await viewCreditflexAnnounce(); say("an-m", note, true);
   };
   v.querySelectorAll("[data-arch]").forEach(b => b.onclick = async () => {
     if (!confirm("Remove this announcement for everyone?")) return;
-    const { error } = await sb.from("announcements").update({ archived_at: new Date().toISOString() }).eq("id", Number(b.dataset.arch));
+    const { error } = await Announcements.archive(Number(b.dataset.arch));
     if (error) return alert(cfErr(error)); viewCreditflexAnnounce();
   });
 };

@@ -2,7 +2,7 @@
 async function viewCatalogue() {
   const v = $("view"), admin = S.me.role === "admin";
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>${loading}`;
-  const { data, error } = await cfLoadAll("products", "id,name,price,image_url,in_stock", ["name", "id"]);
+  const { data, error } = await Products.all();
   if (error) return v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   v.innerHTML = `<h1 class="${C.h1}">Catalogue</h1>
     ${admin ? `<section class="${C.card}"><div class="grid grid-cols-2 gap-2"><button class="${C.btn}" id="add" type="button"><span>+ Add product</span></button><button class="${C.btn} !bg-secondary-container !text-on-secondary-container !shadow-none" id="addmany" type="button">${ic("photo_library", "text-[20px]")}<span>Add many</span></button></div><div id="pf"></div></section>` : ""}
@@ -26,12 +26,12 @@ async function viewCatalogue() {
       if (file) {
         if (file.size > 2097152) { busy(b, false); return say("fm", "Photo is bigger than 2 MB."); }
         const path = `${Date.now()}-${file.name.replace(/[^a-z0-9.]/gi, "_")}`;
-        const up = await sb.storage.from("product-images").upload(path, file, { contentType: file.type });
+        const up = await Products.uploadPhoto(path, file, file.type);
         if (up.error) { busy(b, false); return say("fm", cfErr(up.error)); }
-        image_url = sb.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+        image_url = Products.photoUrl(path);
       }
       const row = { name: $("pn").value.trim(), price: Number($("pp").value), in_stock: $("ps").checked, image_url };
-      const { error } = p ? await sb.from("products").update(row).eq("id", p.id) : await sb.from("products").insert(row);
+      const { error } = await Products.save(row, p && p.id);
       busy(b, false);
       if (error) return say("fm", cfErr(error));
       viewCatalogue();

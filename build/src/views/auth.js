@@ -28,7 +28,7 @@ function renderLogin(note) {
     const email = $("em").value.trim();
     if (!email) return say("authMsg", "Type your email above first, then tap Forgot password.");
     const b = $("fp"); busy(b, true);
-    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    const { error } = await Auth.sendResetLink(email, location.origin + location.pathname);
     busy(b, false);
     if (error) return say("authMsg", error.message);
     say("authMsg", "If that email has an account, a reset link is on its way. Open it on this phone.", true);
@@ -40,13 +40,13 @@ function renderLogin(note) {
     if (S.signup) {
       const pwIssue = cfPwIssue(password);
       if (pwIssue) { busy(b, false); return say("authMsg", pwIssue); }
-      const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: $("fn").value.trim(), phone: $("ph").value.trim() } } });
+      const { error } = await Auth.signUp(email, password, $("fn").value.trim(), $("ph").value.trim());
       busy(b, false);
       if (error) return say("authMsg", error.message);
       S.signup = false;
       return renderLogin("Account created. Ask an admin to approve it, then sign in.");
     }
-    const { error } = await sb.auth.signInWithPassword({ email, password });
+    const { error } = await Auth.signIn(email, password);
     busy(b, false);
     if (error) return say("authMsg", error.message);
     await loadMe();
@@ -68,7 +68,7 @@ function renderNewPassword() {
     if ($("np1").value !== $("np2").value) return say("npMsg", "The two passwords do not match.");
     { const pwIssue = cfPwIssue($("np1").value); if (pwIssue) return say("npMsg", pwIssue); }
     const b = $("npBtn"); busy(b, true);
-    const { error } = await sb.auth.updateUser({ password: $("np1").value });
+    const { error } = await Auth.setPassword($("np1").value);
     busy(b, false);
     if (error) return say("npMsg", error.message);
     S.recovery = false; history.replaceState(null, "", location.pathname);

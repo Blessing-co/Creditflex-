@@ -14,7 +14,8 @@ const srcDir = path.join(dir, "src");
 let html = fs.readFileSync(path.join(srcDir, "index.html"), "utf8");
 // The app is written as small files in folders (core, models, views, controllers, routes) and joined, in this order, into one app.js for the phone.
 const ORDER = ["core/config.js", "core/net.js", "core/client.js", "core/state.js", "core/ui.js", "core/security.js", "core/pwa.js",
-  "models/data.js", "models/ledger.js", "models/offline.js",
+  "models/data.js", "models/ledger.js", "models/auth.js", "models/staff.js", "models/products.js", "models/plans.js", "models/customers.js",
+  "models/payments.js", "models/purchases.js", "models/summary.js", "models/announcements.js", "models/offline.js",
   "routes.js", "views/shell.js", "views/hub.js", "views/auth.js",
   "controllers/session.js", "controllers/collections.js", "controllers/pay.js", "controllers/customers.js", "controllers/catalogue.js", "controllers/staff.js",
   "controllers/tour.js", "controllers/learn.js", "controllers/analytics.js", "controllers/settings.js", "controllers/account.js", "controllers/financial.js",

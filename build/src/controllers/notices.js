@@ -4,8 +4,8 @@
 const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return "just now"; if (m < 60) return m + " min ago"; const h = Math.round(m / 60); if (h < 24) return h + " h ago"; return new Date(iso).toLocaleDateString(); };
 
 async function loadNotices() {
-  const a = await cfRead("notices", () => sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(40));
-  const r = await cfRead("notice-reads", () => sb.from("announcement_reads").select("announcement_id").eq("staff_id", S.me.id));
+  const a = await Announcements.listMine();
+  const r = await Announcements.myReads(S.me.id);
   const seen = new Set((r.data || []).map(x => String(x.announcement_id)));
   return { list: a.data || [], seen, error: a.error, stale: a.stale };
 }
@@ -31,19 +31,19 @@ window.cfPushEnable = async function () {
   if (!pushSupported()) throw Error(isIOS && !standalone() ? "On iPhone, first tap Share, then Add to Home Screen, and open Creditflex from the new icon." : "This browser does not support notifications.");
   const perm = await Notification.requestPermission();
   if (perm !== "granted") throw Error("Notifications are blocked. Allow them in your phone or browser settings for this app.");
-  const k = await sb.functions.invoke("push", { body: { action: "key" } });
+  const k = await Announcements.pushKey();
   const key = k.data && k.data.key; if (!key) throw Error("Notifications are not ready yet. Try again in a minute.");
   const reg = await pushReg();
   let sub = await reg.pushManager.getSubscription();
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(key) });
   const j = sub.toJSON();
-  const { error } = await sb.rpc("save_push_subscription", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: navigator.userAgent });
+  const { error } = await Announcements.saveSubscription(j.endpoint, j.keys.p256dh, j.keys.auth, navigator.userAgent);
   if (error) throw error;
   try { localStorage.setItem("cf-push-on", "1"); } catch (e) {}
 };
 window.cfPushDisable = async function () {
   const sub = await pushCurrent();
-  if (sub) { try { await sb.rpc("remove_push_subscription", { p_endpoint: sub.endpoint }); } catch (e) {} try { await sub.unsubscribe(); } catch (e) {} }
+  if (sub) { try { await Announcements.removeSubscription(sub.endpoint); } catch (e) {} try { await sub.unsubscribe(); } catch (e) {} }
   try { localStorage.removeItem("cf-push-on"); } catch (e) {}
 };
 /* called when someone signs out so the next person on this phone does not receive their messages */
@@ -67,7 +67,7 @@ window.viewCreditflexInbox = async function () {
   v.innerHTML = `<h1 class="${C.h1}">Announcements</h1>${cfStaleNote(stale)}<section class="${C.card} space-y-2"><h2 class="text-title-md">Notifications</h2><div id="inbox-push"></div></section>` + (list.length ? list.map(x => { const fresh = !seen.has(String(x.id)); return `<section class="${C.card} space-y-1 ${fresh ? "border-l-4 border-primary" : ""}"><div class="flex items-start justify-between gap-2"><b class="text-body-lg">${esc(x.title)}</b>${fresh ? `<span class="text-label-md rounded-full px-2.5 py-0.5 bg-primary-fixed text-on-primary-fixed shrink-0">New</span>` : ""}</div><p class="text-body-md whitespace-pre-wrap break-words">${esc(x.body)}</p><p class="${C.mute}">${esc(ago(x.created_at))}${x.audience_agent_id ? " · just for you" : ""}</p></section>`; }).join("") : `<div class="${C.card} text-center ${C.mute}">No announcements yet.</div>`);
   cfPushSlot("inbox-push");
   const fresh = list.filter(x => !seen.has(String(x.id)));
-  if (fresh.length && navigator.onLine) { try { await sb.from("announcement_reads").upsert(fresh.map(x => ({ announcement_id: x.id, staff_id: S.me.id })), { onConflict: "announcement_id,staff_id", ignoreDuplicates: true }); } catch (e) {} const b = document.getElementById("bellBadge"); if (b) b.classList.add("hidden"); }
+  if (fresh.length && navigator.onLine) { try { await Announcements.markRead(fresh.map(x => x.id), S.me.id); } catch (e) {} const b = document.getElementById("bellBadge"); if (b) b.classList.add("hidden"); }
 };
 
 /* admin: write and manage announcements */
@@ -75,9 +75,9 @@ window.viewCreditflexAnnounce = async function () {
   if (S.me.role !== "admin") { return go("collections"); }
   const v = $("view"); v.innerHTML = `<h1 class="${C.h1}">Announcements</h1>${loading}`;
   const [ag, an, rd] = await Promise.all([
-    sb.from("staff").select("id,full_name").eq("role", "agent").eq("status", "active").order("full_name"),
-    sb.from("announcements").select("id,title,body,created_at,audience_agent_id").is("archived_at", null).order("created_at", { ascending: false }).limit(30),
-    sb.from("announcement_reads").select("announcement_id,staff_id")
+    Staff.activeAgents(),
+    Announcements.listSent(),
+    Announcements.allReads()
   ]);
   const agents = ag.data || [], list = an.data || [], reads = rd.data || [];
   const nameOf = id => (agents.find(a => a.id === id) || {}).full_name || "one agent";
@@ -95,16 +95,16 @@ window.viewCreditflexAnnounce = async function () {
   $("an-f").onsubmit = async e => {
     e.preventDefault(); const b = $("an-s"); busy(b, true);
     const row = { title: $("an-t").value.trim(), body: $("an-b").value.trim(), audience_agent_id: $("an-a").value || null, created_by: S.me.id };
-    const ins = await sb.from("announcements").insert(row).select("id").maybeSingle();
+    const ins = await Announcements.send(row);
     if (ins.error) { busy(b, false); return say("an-m", cfErr(ins.error)); }
     let note = "Announcement sent. Agents will see it when they open the app.";
-    try { const r = await sb.functions.invoke("push", { body: { action: "send", announcement_id: ins.data && ins.data.id } }); const d = r.data || {}; if (d.ok) note = d.devices ? "Announcement sent. Phone notification delivered to " + d.sent + " of " + d.devices + " phones." : "Announcement sent. No agent has turned on phone notifications yet, so they will see it when they open the app."; } catch (e) {}
+    try { const r = await Announcements.pushSend(ins.data && ins.data.id); const d = r.data || {}; if (d.ok) note = d.devices ? "Announcement sent. Phone notification delivered to " + d.sent + " of " + d.devices + " phones." : "Announcement sent. No agent has turned on phone notifications yet, so they will see it when they open the app."; } catch (e) {}
     busy(b, false);
     await viewCreditflexAnnounce(); say("an-m", note, true);
   };
   v.querySelectorAll("[data-arch]").forEach(b => b.onclick = async () => {
     if (!confirm("Remove this announcement for everyone?")) return;
-    const { error } = await sb.from("announcements").update({ archived_at: new Date().toISOString() }).eq("id", Number(b.dataset.arch));
+    const { error } = await Announcements.archive(Number(b.dataset.arch));
     if (error) return alert(cfErr(error)); viewCreditflexAnnounce();
   });
 };

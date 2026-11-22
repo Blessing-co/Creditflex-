@@ -20,14 +20,14 @@ async function viewPay() {
     <section id="list" class="space-y-2">${loading}</section><div id="form"></div>`;
   let data=[], cfRecent=[];
   if(navigator.onLine){
-    const result=await cfLoadAll("purchase_ledger","purchase_id,customer_id,customer_name,customer_phone,product_id,product_name,plan_name,total_price,installment_amount,amount_paid,balance,payments_made,status",["customer_name","purchase_id"],q=>q.eq("status","active"));
+    const result=await Purchases.active();
     if(!result.error){data=result.data||[];try{await cfCacheLedger(data);}catch(e){console.warn("Could not cache purchase list",e);}}
     else {const cached=await cfCachedLedger().catch(()=>null);if(cached&&Array.isArray(cached.rows)){data=cached.rows.filter(x=>x.status==="active");say("top","Live data could not be reached. Showing the last saved customer list from this device.",false);}else return $("list").innerHTML='<div class="bg-error-container rounded-xl p-4">Could not load purchases. Connect to the internet and try again.</div>';}
     try{
       const since=new Date(new Date().setHours(0,0,0,0)).toISOString();
-      const paysRes=await sb.from("payments").select("purchase_id,created_at").eq("collected_by",S.me.id).gte("created_at",since).is("voided_at",null);
+      const paysRes=await Payments.mineSince(S.me.id,since);
       const ids=[...new Set((paysRes.data||[]).map(p=>p.purchase_id))];let histRows=[],histErr=null;
-      for(let i=0;i<ids.length&&!histErr;i+=80){const h=await sb.from("purchase_ledger").select("purchase_id,customer_id,product_id").in("purchase_id",ids.slice(i,i+80));if(h.error)histErr=h.error;else histRows=histRows.concat(h.data||[]);}
+      for(let i=0;i<ids.length&&!histErr;i+=80){const h=await Purchases.historyFor(ids.slice(i,i+80));if(h.error)histErr=h.error;else histRows=histRows.concat(h.data||[]);}
       const hist={data:histRows,error:histErr},pays=paysRes;
       if(!hist.error&&!pays.error){const map=new Map((hist.data||[]).map(x=>[String(x.purchase_id),x]));cfRecent=(pays.data||[]).map(p=>({...map.get(String(p.purchase_id)),created_at:p.created_at})).filter(x=>x.customer_id&&x.product_id);await cfCacheRecent(cfRecent);}
       else {const cached=await cfCachedRecent().catch(()=>null);cfRecent=cached?.rows||[];}
@@ -85,7 +85,7 @@ async function viewPay() {
         ${S.me.role==="admin"?`<div><label class="${C.lbl}" for="pd">Date</label><input id="pd" type="date" class="${C.inp}" value="${today()}" required></div>`:`<p class="text-label-md text-on-surface-variant flex items-center gap-1.5">${ic("event","text-[18px]")}Recorded as today, ${esc(today())}</p>`}
         <button class="${C.btn}" id="pb">${ic("verified", "fill text-[24px]")}<span>Save payment</span></button>
       </form><div id="pm"></div></section>`;
-    (async () => { let d = false; try { if (navigator.onLine) { const x = await sb.rpc("check_recent_payment_duplicate", { p_customer_id: r.customer_id, p_product_id: r.product_id }); d = !x.error && x.data === true; } else d = cfIsRecentDuplicate(r, cfRecent) || await cfHasQueuedDuplicate(r); } catch (e) {}
+    (async () => { let d = false; try { if (navigator.onLine) { const x = await Payments.duplicateToday(r.customer_id, r.product_id); d = !x.error && x.data === true; } else d = cfIsRecentDuplicate(r, cfRecent) || await cfHasQueuedDuplicate(r); } catch (e) {}
       const el = $("dup"); if (d && el && S.selPurchase === r.purchase_id) el.innerHTML = `<div class="bg-tertiary-fixed text-on-tertiary-fixed rounded-xl p-3 flex items-start gap-2">${ic("error", "fill text-[22px] shrink-0")}<span class="text-label-lg flex-1">Already paid today: a payment for this customer and item was recorded earlier today. Check before saving another.</span></div>`; })();
     $("form").scrollIntoView({ behavior: "smooth" });
     $("cInst").onclick = () => { $("amt").value = def; };
@@ -104,13 +104,13 @@ async function viewPay() {
         say("top", "Payment queued on this phone. It is NOT yet recorded on the server. It will sync when internet returns.", true);
         return;
       }
-      const duplicateCheck=await sb.rpc("check_recent_payment_duplicate",{p_customer_id:r.customer_id,p_product_id:r.product_id});
+      const duplicateCheck=await Payments.duplicateToday(r.customer_id,r.product_id);
       if(duplicateCheck.error){busy(b,false);return say("pm",cfErr(duplicateCheck.error));}
       if(duplicateCheck.data&&!cfDupAck(r,amount,paymentDate)){busy(b,false);return cfDupAsk(r,amount,paymentDate);}
       const offlineId = cfUuid();
-      let { data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId }).select("id").maybeSingle();
+      let { data: saved, error } = await Payments.record({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id, offline_submission_id: offlineId }, true);
       if (error && /offline_submission_id|column/i.test(error.message || "")) {
-        ({ data: saved, error } = await sb.from("payments").insert({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }).select("id").maybeSingle());
+        ({ data: saved, error } = await Payments.record({ purchase_id: r.purchase_id, amount, paid_on: paymentDate, collected_by: S.me.id }, false));
       }
       busy(b, false);
       if (error) {
@@ -144,7 +144,7 @@ function cfSmsButton(paymentId, who) {
   $("sms-btn").onclick = async () => {
     const b = $("sms-btn"); busy(b, true);
     let res;
-    try { const r = await sb.functions.invoke("send-payment-sms", { body: { payment_id: paymentId } }); res = r.data; if (r.error) { try { res = await r.error.context.json(); } catch (e) { res = { ok: false, message: cfErr(r.error) }; } } }
+    try { const r = await Payments.sendSms(paymentId); res = r.data; if (r.error) { try { res = await r.error.context.json(); } catch (e) { res = { ok: false, message: cfErr(r.error) }; } } }
     catch (e) { res = { ok: false, message: cfErr(e) }; }
     busy(b, false);
     const ok = res && res.ok;

@@ -12,8 +12,8 @@ async function cfRegisterForm() {
   const v = $("cbody");
   v.innerHTML = `<h1 class="${C.h1}">New customer</h1>${loading}`;
   const [{ data: prods }, { data: plans }] = await Promise.all([
-    cfRead("reg:products", () => sb.from("products").select("id,name,price").eq("in_stock", true).order("name")),
-    cfRead("reg:plans", () => sb.from("payment_plans").select("id,name,frequency,installments").order("id"))
+    Products.inStock(),
+    Plans.all()
   ]);
   if (!prods || !prods.length) return v.innerHTML = `<h1 class="${C.h1}">New customer</h1><div class="bg-surface-container-low rounded-xl p-5 text-center"><div class="w-12 h-12 mx-auto rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center">${ic("inventory_2", "text-[26px]")}</div><p class="${C.mute} mt-2">No products are in stock yet. An admin needs to add products in the Catalogue tab first.</p></div>`;
   v.innerHTML = `<h1 class="${C.h1}">Register a new customer</h1>
@@ -37,7 +37,7 @@ async function cfRegisterForm() {
     const subId = cfUuid();
     const keep = async () => { const pr = prods.find(x => x.id == args.p_product_id); const ok = await queueCreditflexRegistration({ id: subId, ...args, product_label: pr ? pr.name : "" }); busy(b, false); if (ok) { $("rf").reset(); preview(); say("rm", "No internet. Customer saved on this phone and will be registered when you are online. Record their payments after that.", true); } else say("rm", "Could not save on this phone. Try again when online."); };
     if (!navigator.onLine) return keep();
-    const { error } = await sb.rpc("register_customer", { ...args, p_submission_id: subId });
+    const { error } = await Customers.register(args, subId);
     if (error && /failed to fetch|network|load failed|timeout|connection|fetch/i.test(String(error.message || ""))) return keep();
     busy(b, false);
     if (error) return say("rm", cfErr(error));
@@ -50,7 +50,7 @@ async function cfRegisterForm() {
 async function cfStatements() {
   const v = $("cbody");
   v.innerHTML = loading;
-  const { data, error, stale } = await cfLoadAll("customers", "id,full_name,phone,location", ["full_name", "id"]);
+  const { data, error, stale } = await Customers.all();
   if (error) return v.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const all = data || [];
   v.innerHTML = cfStaleNote(stale) + `<section class="${C.card}"><label class="${C.lbl} flex items-center gap-1.5" for="sq">${ic("search", "text-[18px] text-primary")}Find a customer</label>
@@ -66,12 +66,12 @@ async function cfStatements() {
 }
 async function cfStatement(c) {
   const box = $("sbox"); box.innerHTML = loading; box.scrollIntoView({ behavior: "smooth", block: "start" });
-  const led = await cfRead("stmt:" + c.id, () => sb.from("purchase_ledger").select("purchase_id,product_name,plan_name,agent_name,total_price,installment_amount,amount_paid,balance,status,created_at").eq("customer_id", c.id).order("created_at", { ascending: false }));
+  const led = await Purchases.forCustomer(c.id);
   if (led.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(led.error))}</div>`;
   const purchases = led.data || [], ids = purchases.map(x => x.purchase_id);
   let pays = [];
   if (ids.length) {
-    const r = await cfRead("stmtp:" + c.id, () => sb.from("payments").select("id,purchase_id,amount,paid_on,created_at,voided_at").in("purchase_id", ids).is("voided_at", null).order("paid_on", { ascending: true }));
+    const r = await Payments.forStatement(c.id, ids);
     if (r.error) return box.innerHTML = `<div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(r.error))}</div>`;
     pays = r.data || [];
   }

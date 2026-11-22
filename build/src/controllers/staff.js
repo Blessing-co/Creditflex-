@@ -2,7 +2,7 @@
 async function viewStaff() {
   const v = $("view");
   v.innerHTML = `<h1 class="${C.h1}">Staff</h1>${loading}`;
-  const { data: raw, error } = await cfLoadAll("staff", "id,full_name,email,phone,role,status,supervisor_id,created_at", ["status","full_name","id"]);
+  const { data: raw, error } = await Staff.all();
   if (error) return v.innerHTML = `<h1 class="${C.h1}">Staff</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(error))}</div>`;
   const rank = { pending: 0, active: 1, disabled: 2 };
   const data = [...raw].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
@@ -24,11 +24,11 @@ async function viewStaff() {
     const s = data.find(x => x.id === el.dataset.s);
     el.querySelector(".st").value = s.status; el.querySelector(".ro").value = s.role; el.querySelector(".su").value = s.supervisor_id || "";
     el.querySelector(".sv").onclick = async () => {
-      const { error } = await sb.rpc("admin_update_staff", { p_staff_id: s.id, p_status: el.querySelector(".st").value, p_role: el.querySelector(".ro").value, p_supervisor_id: el.querySelector(".su").value || null });
+      const { error } = await Staff.adminUpdate(s.id, el.querySelector(".st").value, el.querySelector(".ro").value, el.querySelector(".su").value || null);
       say("sm", error ? cfErr(error) : `${s.full_name} updated.`, !error);
       if (!error) window.scrollTo({ top: 0, behavior: "smooth" });
     };
   });
 }
 
-sb.auth.onAuthStateChange(ev => { if (ev === "SIGNED_OUT") { S.me = null; } if (ev === "PASSWORD_RECOVERY") { S.recovery = true; renderNewPassword(); } });
+Auth.onChange(ev => { if (ev === "SIGNED_OUT") { S.me = null; } if (ev === "PASSWORD_RECOVERY") { S.recovery = true; renderNewPassword(); } });

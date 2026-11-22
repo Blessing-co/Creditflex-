@@ -80,7 +80,7 @@ window.viewCreditflexBulk = async function () {
   const v = $("view");
   if (S.me.role !== "admin") { return go("collections"); }
   v.innerHTML = `<h1 class="${C.h1}">Add many products</h1>${loading}`;
-  const ex = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
+  const ex = await Products.allForBulk();
   if (ex.error) return v.innerHTML = `<h1 class="${C.h1}">Add many products</h1><div class="bg-error-container text-on-error-container rounded-xl p-4 text-label-lg">${esc(cfErr(ex.error))}</div>`;
   const existing = new Map((ex.data || []).map(p => [norm(p.name), p]));
 
@@ -219,8 +219,8 @@ window.viewCreditflexBulk = async function () {
         while (queue.length) {
           const r = queue.shift();
           const path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "-" + (norm(r.name).slice(0, 30) || "product") + ".jpg";
-          const up = await sb.storage.from("product-images").upload(path, r.photo, { contentType: r.photo.type || "image/jpeg" });
-          if (up.error) { result.photosFailed++; r.url = null; } else r.url = sb.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+          const up = await Products.uploadPhoto(path, r.photo, r.photo.type || "image/jpeg");
+          if (up.error) { result.photosFailed++; r.url = null; } else r.url = Products.photoUrl(path);
           prog("Uploading photos… " + (++done) + " of " + withPhotos.length);
         }
       }));
@@ -229,21 +229,21 @@ window.viewCreditflexBulk = async function () {
       for (let i = 0; i < news.length; i += 50) {
         const chunk = news.slice(i, i + 50); prog("Saving products… " + Math.min(i + 50, news.length) + " of " + news.length);
         const payload = chunk.map(r => ({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null }));
-        const b = await sb.from("products").insert(payload);
+        const b = await Products.insertMany(payload);
         if (!b.error) { chunk.forEach(r => saved.add(r.id)); result.added += chunk.length; continue; }
         for (const r of chunk) {
-          const one = await sb.from("products").insert({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null });
+          const one = await Products.insertOne({ name: r.name, price: r.price, in_stock: r.in_stock, image_url: r.url || null });
           if (one.error) { r.err = cfErr(one.error); result.failed++; } else { saved.add(r.id); result.added++; }
         }
       }
       /* 3. updates to products that already exist */
       for (const r of upds) {
         const e = existing.get(norm(r.name)); const patch = { price: r.price, in_stock: r.in_stock }; if (r.url) patch.image_url = r.url;
-        const u = await sb.from("products").update(patch).eq("id", e.id);
+        const u = await Products.update(e.id, patch);
         if (u.error) { r.err = cfErr(u.error); result.failed++; } else { saved.add(r.id); result.updated++; }
       }
       rows = rows.filter(r => !saved.has(r.id));
-      const again = await cfLoadAll("products", "id,name,price,in_stock,image_url", ["name", "id"]);
+      const again = await Products.allForBulk();
       if (!again.error) { existing.clear(); (again.data || []).forEach(p => existing.set(norm(p.name), p)); }
       const parts = []; if (result.added) parts.push(result.added + " added"); if (result.updated) parts.push(result.updated + " updated");
       let msg = (parts.join(", ") || "Nothing saved") + ".";

@@ -53,11 +53,13 @@ build/src/
   main.js             starts the app
   routes.js           ROUTES: the table of pages (like Flask's URL rules) + go(), goBack(), phone Back-button handling
   core/               config, network layer, Supabase client, shared state, small UI helpers, password rules, PWA plumbing
-  models/             data: paging/cache reads (data.js), running balance (ledger.js), phone storage + offline queue (offline.js)
+  models/             ALL database access, one file per kind of data: auth, staff, customers, products, plans, payments,
+                      purchases, summary, announcements; plus paging/cache reads (data.js), running balance (ledger.js),
+                      phone storage + offline queue (offline.js)
   views/              page frame/menu (shell.js), hub lists (hub.js), sign-in screens (auth.js)
   controllers/        one file per page: collections, pay, customers, catalogue, staff, analytics, settings, account,
                       financial, export, credit, learn, tour, bulk, notices, legal, lock (PIN/fingerprint)
 ```
 - **Add a page:** write `controllers/mypage.js` with a `viewMyPage()` function, add its path to `ORDER` in build.js, and add one line to `ROUTES` in routes.js. The build stops with a clear message if a source file is not listed.
 - **Open a page from code:** `go("pay")`. The Back button and the on-screen Back bar follow `ROUTES[...].parent` and the browser history.
-- Database queries are still written inside the controllers (the models folder holds the offline and data-reading code). Moving every query into model files is the next tidy-up.
+- Rule: controllers never talk to Supabase directly. They call a model, e.g. `Payments.record(...)`, `Customers.register(...)`, `Staff.all()`. To change a query, change it once in `models/`.
