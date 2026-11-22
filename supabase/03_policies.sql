@@ -92,3 +92,14 @@ create policy reads_select on public.announcement_reads for select to authentica
 create policy reads_insert on public.announcement_reads for insert to authenticated
   with check ((select private.is_active_staff()) and staff_id = (select auth.uid())
     and exists (select 1 from public.announcements a where a.id = announcement_id));
+
+-- problem_reports: staff send and read their own; admin reads all and marks done
+alter table public.problem_reports enable row level security;
+revoke all on public.problem_reports from anon, authenticated;
+grant select, insert, update on public.problem_reports to authenticated;
+create policy reports_insert on public.problem_reports for insert to authenticated
+  with check ((select private.is_active_staff()) and reporter_id = (select auth.uid()) and status = 'new');
+create policy reports_select on public.problem_reports for select to authenticated
+  using ((select private.is_active_staff()) and (reporter_id = (select auth.uid()) or (select private.is_admin())));
+create policy reports_update on public.problem_reports for update to authenticated
+  using ((select private.is_admin())) with check ((select private.is_admin()));

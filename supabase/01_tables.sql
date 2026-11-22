@@ -215,3 +215,18 @@ create table if not exists public.push_keys (
 );
 alter table public.push_keys enable row level security;
 revoke all on public.push_keys from anon, authenticated;
+
+-- problem reports from agents to the admin
+create table if not exists public.problem_reports (
+  id bigint generated always as identity primary key,
+  reporter_id uuid not null references public.staff(id) default auth.uid(),
+  message text not null check (length(trim(message)) between 5 and 1000),
+  page text check (length(page) <= 60),
+  user_agent text check (length(user_agent) <= 300),
+  app_build text check (length(app_build) <= 40),
+  recent_errors text check (length(recent_errors) <= 2000),
+  status text not null default 'new' check (status in ('new','done')),
+  created_at timestamptz not null default now()
+);
+create index if not exists problem_reports_created_idx on public.problem_reports (created_at desc);
+create index if not exists problem_reports_reporter_idx on public.problem_reports (reporter_id);
