@@ -19,6 +19,14 @@
       b.type = "button";
       b.className = C.btn2 + " w-full";
       b.textContent = label;
+      if (id === "google") {
+        // Shows Google's official icon once it is saved as icons/google.svg
+        const img = new Image(20, 20);
+        img.alt = "";
+        img.className = "inline-block align-middle mr-2";
+        img.onload = () => b.prepend(img);
+        img.src = "/icons/google.svg";
+      }
       b.onclick = async () => {
         b.disabled = true;
         const { error } = await sb.auth.signInWithOAuth({ provider: id, options: { redirectTo: location.origin } });
